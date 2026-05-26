@@ -1,0 +1,30 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Jabsco.Ui.Views.ApprovalDialog"
+        Title="Tool Approval Required"
+        Width="420" Height="240"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False">
+    <StackPanel Margin="16" Spacing="12">
+        <TextBlock Text="The agent wants to execute a tool action that requires approval."
+                   TextWrapping="Wrap" Foreground="#ccc"/>
+        <Border Background="#2d2d2d" CornerRadius="4" Padding="10">
+            <TextBlock Name="ToolDetailText" FontFamily="Monospace" FontSize="12"
+                       Foreground="#9cdcfe" TextWrapping="Wrap"/>
+        </Border>
+        <Grid ColumnDefinitions="*,*,*">
+            <Button Grid.Column="0" Content="Allow Once"
+                    Margin="0,0,4,0" Padding="8,6"
+                    Background="#0e639c" Foreground="White"
+                    Click="AllowOnce_Click"/>
+            <Button Grid.Column="1" Content="Allow Session"
+                    Margin="4,0" Padding="8,6"
+                    Background="#16825d" Foreground="White"
+                    Click="AllowSession_Click"/>
+            <Button Grid.Column="2" Content="Deny"
+                    Margin="4,0,0,0" Padding="8,6"
+                    Background="#5a1d1d" Foreground="White"
+                    Click="Deny_Click"/>
+        </Grid>
+    </StackPanel>
+</Window>

@@ -1,0 +1,212 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Jabsco.Ui.ViewModels"
+             xmlns:core="using:Jabsco.Core"
+             x:Class="Jabsco.Ui.Views.ConnectionPanelView"
+             x:DataType="vm:ConnectionPanelViewModel"
+             Background="#D4D4D4">
+    <UserControl.Styles>
+        <Style Selector="Button.tabBtn">
+            <Setter Property="Background" Value="#D0D0D0"/>
+            <Setter Property="Foreground" Value="#333333"/>
+        </Style>
+        <Style Selector="Button.tabBtn.active">
+            <Setter Property="Background" Value="#7B2FBE"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+        <Style Selector="Button.iconBtn">
+            <Setter Property="Opacity" Value="0"/>
+        </Style>
+        <Style Selector="Border.recentRow:pointerover Button.iconBtn">
+            <Setter Property="Opacity" Value="1"/>
+        </Style>
+    </UserControl.Styles>
+    <ScrollViewer>
+        <StackPanel HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                    MaxWidth="520" Margin="32" Spacing="24">
+
+            <!-- Header -->
+            <StackPanel Spacing="4">
+                <TextBlock Text="Jabsco" FontSize="24" FontWeight="SemiBold"/>
+                <TextBlock Text="Remote desktop agent" Foreground="#666666" FontSize="13"/>
+            </StackPanel>
+
+            <!-- Recent connections -->
+            <StackPanel Spacing="8" IsVisible="{Binding HasRecentConnections}">
+                <TextBlock Text="RECENT" FontSize="11" FontWeight="SemiBold" Foreground="#888888"/>
+                <Border Background="#EBEBEB" BorderBrush="#C0C0C0" BorderThickness="1" CornerRadius="4">
+                    <ItemsControl ItemsSource="{Binding RecentConnections}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:RecentConnectionViewModel">
+                                <Border Classes="recentRow" Background="Transparent"
+                                        BorderBrush="#CACACA" BorderThickness="0,0,0,1" Padding="12,10">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <StackPanel Grid.Column="0" Spacing="1">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13"/>
+                                            <TextBlock Text="{Binding Username}" Foreground="#666666" FontSize="12"/>
+                                            <TextBlock Text="{Binding LastUsedDisplay}" Foreground="#999999" FontSize="11"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal"
+                                                    Spacing="4" VerticalAlignment="Center">
+                                            <Button Classes="iconBtn" ToolTip.Tip="Edit"
+                                                    Command="{Binding $parent[UserControl].((vm:ConnectionPanelViewModel)DataContext).BeginEditCommand}"
+                                                    CommandParameter="{Binding}"
+                                                    Background="Transparent" Foreground="#888888"
+                                                    Padding="6,4" CornerRadius="3">
+                                                <Path Data="{x:Static core:Icons.Edit}"
+                                                      Fill="{Binding $parent[Button].Foreground}"
+                                                      Width="14" Height="14" Stretch="Uniform"/>
+                                            </Button>
+                                            <Button Classes="iconBtn" ToolTip.Tip="Delete"
+                                                    IsVisible="{Binding !IsPendingDelete}"
+                                                    Command="{Binding $parent[UserControl].((vm:ConnectionPanelViewModel)DataContext).BeginDeleteProfileCommand}"
+                                                    CommandParameter="{Binding}"
+                                                    Background="Transparent" Foreground="#888888"
+                                                    Padding="6,4" CornerRadius="3">
+                                                <Path Data="{x:Static core:Icons.Delete}"
+                                                      Fill="{Binding $parent[Button].Foreground}"
+                                                      Width="14" Height="14" Stretch="Uniform"/>
+                                            </Button>
+                                            <StackPanel IsVisible="{Binding IsPendingDelete}"
+                                                        Orientation="Horizontal" Spacing="4"
+                                                        VerticalAlignment="Center">
+                                                <Button Content="Delete?"
+                                                        Command="{Binding $parent[UserControl].((vm:ConnectionPanelViewModel)DataContext).ConfirmDeleteProfileCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        Background="#C62828" Foreground="White"
+                                                        FontSize="11" Padding="7,3" CornerRadius="3"/>
+                                                <Button Content="×"
+                                                        Command="{Binding $parent[UserControl].((vm:ConnectionPanelViewModel)DataContext).CancelDeleteProfileCommand}"
+                                                        CommandParameter="{Binding}"
+                                                        Background="Transparent" Foreground="#888888"
+                                                        FontSize="14" FontWeight="Bold" Padding="4,1"/>
+                                            </StackPanel>
+                                            <Button Content="Connect"
+                                                    Command="{Binding $parent[UserControl].((vm:ConnectionPanelViewModel)DataContext).ConnectCommand}"
+                                                    CommandParameter="{Binding}"
+                                                    Background="#7B2FBE" Foreground="White"
+                                                    Padding="16,6" CornerRadius="3"
+                                                    FontSize="12"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Border>
+            </StackPanel>
+
+            <!-- New session / edit form -->
+            <StackPanel Spacing="12">
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0" Text="{Binding FormTitle}"
+                               FontSize="11" FontWeight="SemiBold" Foreground="#888888"
+                               VerticalAlignment="Center"/>
+                    <Button Grid.Column="1" Content="Cancel"
+                            Command="{Binding CancelEditCommand}"
+                            IsVisible="{Binding IsEditingProfile}"
+                            Background="Transparent" Foreground="#888888"
+                            Padding="0" FontSize="11" VerticalAlignment="Center"/>
+                </Grid>
+                <Border Background="#EBEBEB" BorderBrush="#C0C0C0" BorderThickness="1" CornerRadius="4" Padding="16">
+                    <StackPanel Spacing="12">
+
+                        <!-- RDP / Hyper-V tab strip -->
+                        <Grid ColumnDefinitions="*,*" IsVisible="{Binding IsHyperVEnabled}">
+                            <Button Grid.Column="0" Content="RDP"
+                                    Classes="tabBtn"
+                                    Classes.active="{Binding !IsHyperVMode}"
+                                    Command="{Binding SwitchToRdpCommand}"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    Padding="0,6" CornerRadius="3,0,0,3"/>
+                            <Button Grid.Column="1" Content="Hyper-V"
+                                    Classes="tabBtn"
+                                    Classes.active="{Binding IsHyperVMode}"
+                                    Command="{Binding SwitchToHyperVCommand}"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    Padding="0,6" CornerRadius="0,3,3,0"/>
+                        </Grid>
+
+                        <!-- RDP form -->
+                        <StackPanel Spacing="10" IsVisible="{Binding IsHyperVMode, Converter={x:Static BoolConverters.Not}}">
+                            <Grid ColumnDefinitions="100,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Host" VerticalAlignment="Center"/>
+                                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding NewHost}"
+                                         PlaceholderText="hostname or IP address"/>
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Username" VerticalAlignment="Center"/>
+                                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NewUsername}"
+                                         PlaceholderText="optional"/>
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Password" VerticalAlignment="Center"/>
+                                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding NewPassword}"
+                                         PasswordChar="●" PlaceholderText="optional"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- Hyper-V form -->
+                        <StackPanel Spacing="10" IsVisible="{Binding IsHyperVMode}">
+                            <Grid ColumnDefinitions="100,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Host" VerticalAlignment="Center"/>
+                                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding HyperVHost}"
+                                         PlaceholderText="localhost"/>
+                                <Button Grid.Row="0" Grid.Column="2"
+                                        Content="⟳" ToolTip.Tip="Refresh VM list"
+                                        Command="{Binding RefreshVmsCommand}"
+                                        IsEnabled="{Binding IsLoadingVms, Converter={x:Static BoolConverters.Not}}"
+                                        Padding="8,4" CornerRadius="3"/>
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Username" VerticalAlignment="Center"/>
+                                <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding HyperVUsername}"
+                                         PlaceholderText="optional"/>
+                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Password" VerticalAlignment="Center"/>
+                                <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding HyperVPassword}"
+                                         PasswordChar="●" PlaceholderText="optional"/>
+                                <TextBlock Grid.Row="3" Grid.Column="0" Text="VM" VerticalAlignment="Center"/>
+                                <ComboBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2"
+                                          ItemsSource="{Binding HyperVVms}"
+                                          SelectedItem="{Binding SelectedVm}"
+                                          HorizontalAlignment="Stretch"
+                                          PlaceholderText="{Binding VmListPlaceholderText}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:HyperVVmViewModel">
+                                            <TextBlock Text="{Binding DisplayText}"
+                                                       Opacity="{Binding ItemOpacity}"/>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                                <TextBlock Grid.Row="4" Grid.Column="0" Text="VM GUID" VerticalAlignment="Center"/>
+                                <TextBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2"
+                                         Text="{Binding VmId}"
+                                         IsEnabled="{Binding IsVmIdEditable}"
+                                         PlaceholderText="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- Error + connect -->
+                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
+                            <TextBlock Grid.Row="0" Grid.Column="0"
+                                       Text="{Binding ErrorMessage}"
+                                       Foreground="#C62828" FontSize="12"
+                                       TextWrapping="Wrap"
+                                       IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                       Margin="0,0,0,6"/>
+                            <CheckBox Grid.Row="1" Grid.Column="0"
+                                      IsChecked="{Binding SaveCredentials}"
+                                      IsVisible="{Binding HasPassword}"
+                                      Content="Save password"
+                                      FontSize="12"
+                                      VerticalAlignment="Center"
+                                      Margin="0,0,0,6"/>
+                            <Button Grid.Row="2" Grid.Column="1"
+                                    Content="{Binding ConnectButtonText}"
+                                    Command="{Binding ConnectNewCommand}"
+                                    HorizontalAlignment="Right"
+                                    Background="#7B2FBE" Foreground="White"
+                                    Padding="24,7" CornerRadius="3"/>
+                        </Grid>
+
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

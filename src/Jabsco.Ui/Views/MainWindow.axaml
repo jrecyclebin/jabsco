@@ -1,0 +1,124 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Jabsco.Ui.ViewModels"
+        xmlns:v="using:Jabsco.Ui.Views"
+        x:Class="Jabsco.Ui.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Jabsco"
+        Background="#FFFFFF"
+        FontFamily="Segoe UI, system-ui, sans-serif"
+        FontSize="13"
+        MinWidth="900" MinHeight="600"
+        Width="1280" Height="800">
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- Tab bar -->
+        <Border Grid.Row="0" Background="#F0F0F0" BorderBrush="#D4D4D4" BorderThickness="0,0,0,1" Padding="6,4,0,0">
+            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                <StackPanel Orientation="Horizontal">
+
+                    <!-- Connections tab -->
+                    <Border Classes="tabUnit"
+                            Classes.active="{Binding IsConnectionPanelActive}">
+                        <Button Classes="tabInner"
+                                Command="{Binding ShowConnectionPanelCommand}"
+                                Padding="16,6">
+                            <TextBlock Text="Connections" VerticalAlignment="Center"/>
+                        </Button>
+                    </Border>
+
+                    <!-- Session tabs -->
+                    <ItemsControl ItemsSource="{Binding SessionTabs}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:SessionTabViewModel">
+                                <Border Classes="tabUnit"
+                                        Classes.active="{Binding IsActive}">
+                                    <StackPanel Orientation="Horizontal" Spacing="0">
+                                        <Button Classes="tabInner"
+                                                Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).SelectTabCommand}"
+                                                CommandParameter="{Binding}"
+                                                Padding="12,6,4,6">
+                                            <TextBlock Text="{Binding Title}" VerticalAlignment="Center"/>
+                                        </Button>
+                                        <Button Classes="tabClose"
+                                                Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).CloseTabCommand}"
+                                                CommandParameter="{Binding}"
+                                                Padding="4,6"
+                                                Content="✕"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Content area -->
+        <Grid Grid.Row="1">
+            <!-- Connection panel -->
+            <Panel IsVisible="{Binding IsConnectionPanelActive}">
+                <v:ConnectionPanelView DataContext="{Binding ConnectionPanel}"/>
+            </Panel>
+
+            <!-- Active session — framed with a border matching the active tab color -->
+            <Panel IsVisible="{Binding ActiveTab, Converter={x:Static ObjectConverters.IsNotNull}}">
+                <Border BorderBrush="#D4D4D4" BorderThickness="4,2,4,4">
+                    <v:SessionView DataContext="{Binding ActiveTab.Session}"/>
+                </Border>
+            </Panel>
+        </Grid>
+
+    </Grid>
+
+    <Window.Styles>
+
+        <!-- Tab unit: the outer wrapper that carries the pressed-in styling -->
+        <Style Selector="Border.tabUnit">
+            <Setter Property="CornerRadius" Value="8,8,0,0"/>
+        </Style>
+        <Style Selector="Border.tabUnit.active">
+            <Setter Property="Background" Value="#D4D4D4"/>
+            <Setter Property="BorderBrush" Value="#B0B0B0"/>
+            <Setter Property="BorderThickness" Value="1,2,1,0"/>
+        </Style>
+
+        <!-- Tab inner button: transparent so the tabUnit background shows through -->
+        <Style Selector="Button.tabInner">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="CornerRadius" Value="0"/>
+        </Style>
+        <Style Selector="Button.tabInner:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+
+        <!-- Close button: barely visible by default, darkens on hover, always transparent bg -->
+        <Style Selector="Button.tabClose">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="#BBBBBB"/>
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="CornerRadius" Value="0"/>
+        </Style>
+        <Style Selector="Button.tabClose:pointerover">
+            <Setter Property="Foreground" Value="#444444"/>
+        </Style>
+        <Style Selector="Button.tabClose /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="Button.tabClose:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+
+    </Window.Styles>
+</Window>

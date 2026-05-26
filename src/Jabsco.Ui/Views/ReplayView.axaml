@@ -1,0 +1,25 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Jabsco.Ui.ViewModels"
+             xmlns:controls="using:Jabsco.Ui.Controls"
+             x:Class="Jabsco.Ui.Views.ReplayView"
+             x:DataType="vm:ReplayViewModel">
+    <Grid RowDefinitions="*,Auto">
+        <controls:FramebufferControl Grid.Row="0" FrameData="{Binding CurrentFrame}"/>
+        <Border Grid.Row="1" Background="#252526" Padding="8,4">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <Slider Minimum="0" Maximum="{Binding TotalSteps}"
+                    Value="{Binding CurrentStep}"
+                    Width="300"/>
+            <TextBlock VerticalAlignment="Center" Foreground="#ccc" FontSize="12">
+                <TextBlock.Text>
+                    <MultiBinding StringFormat="Step {0} / {1}">
+                        <Binding Path="CurrentStep"/>
+                        <Binding Path="TotalSteps"/>
+                    </MultiBinding>
+                </TextBlock.Text>
+            </TextBlock>
+        </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

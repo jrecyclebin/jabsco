@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Jabsco.Cli/Jabsco.Cli.csproj" />
+    <Project Path="src/Jabsco.Common/Jabsco.Common.csproj" />
+    <Project Path="src/Jabsco.Core/Jabsco.Core.csproj" />
+    <Project Path="src/Jabsco.Daemon/Jabsco.Daemon.csproj" />
+    <Project Path="src/Jabsco.PowerShell/Jabsco.PowerShell.csproj" />
+    <Project Path="src/Jabsco.Ui/Jabsco.Ui.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Jabsco.Core.Tests/Jabsco.Core.Tests.csproj" />
+    <Project Path="tests/Jabsco.SmokeTest/Jabsco.SmokeTest.csproj" />
+  </Folder>
+</Solution>

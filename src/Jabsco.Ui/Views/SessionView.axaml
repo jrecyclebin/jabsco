@@ -1,0 +1,666 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Jabsco.Ui.ViewModels"
+             xmlns:controls="using:Jabsco.Ui.Controls"
+             xmlns:core="using:Jabsco.Core"
+             xmlns:policies="using:Jabsco.Core.Persistence.Policies"
+             xmlns:md="clr-namespace:Markdown.Avalonia;assembly=Markdown.Avalonia"
+             x:Class="Jabsco.Ui.Views.SessionView"
+             x:DataType="vm:SessionViewModel">
+
+    <UserControl.Styles>
+        <Style Selector="Button.modeBtn">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="#CCCCCC"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="CornerRadius" Value="3"/>
+        </Style>
+        <Style Selector="Button.modeBtn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#E5E5E5"/>
+        </Style>
+        <Style Selector="Button.modeBtn.active">
+            <Setter Property="Background" Value="#0078D4"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#0078D4"/>
+        </Style>
+        <Style Selector="Button.modeBtn.active:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#006CBD"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+
+        <!-- Icon strip buttons: transparent, subtle white glow on hover -->
+        <Style Selector="Button.strip-icon">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Foreground" Value="#9AB8D4"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="Button.strip-icon /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+        <Style Selector="Button.strip-icon:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#25FFFFFF"/>
+        </Style>
+        <!-- Active tab: brighter icon + highlight background -->
+        <Style Selector="Button.strip-icon.active">
+            <Setter Property="Foreground" Value="#E8F4FF"/>
+        </Style>
+        <Style Selector="Button.strip-icon.active /template/ ContentPresenter">
+            <Setter Property="Background" Value="#38FFFFFF"/>
+        </Style>
+
+        <Style Selector="TextBox.chat-input">
+            <Setter Property="Foreground" Value="#F8FBFF"/>
+            <Setter Property="WatermarkForeground" Value="#C8DBEE"/>
+            <Setter Property="CaretBrush" Value="#FFFFFF"/>
+            <Setter Property="SelectionBrush" Value="#7097C8FF"/>
+            <Setter Property="SelectionForegroundBrush" Value="#FFFFFF"/>
+            <Setter Property="MinHeight" Value="30"/>
+            <Setter Property="Padding" Value="10,7"/>
+        </Style>
+        <Style Selector="TextBox.chat-input:pointerover /template/ Border#PART_BorderElement">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="TextBox.chat-input:focus /template/ Border#PART_BorderElement">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="TextBox.chat-input:focus-within /template/ Border#PART_BorderElement">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+
+        <Style Selector="Border.chat-bubble">
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+            <Setter Property="MaxWidth" Value="250"/>
+            <Setter Property="BorderBrush" Value="#58FFFFFF"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BoxShadow" Value="0 8 20 0 #16000000"/>
+        </Style>
+        <Style Selector="Border.chat-bubble.user">
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+        </Style>
+
+        <Style Selector="Ellipse.pulse-dot">
+            <Style.Animations>
+                <Animation Duration="0:0:1.2" IterationCount="Infinite" Easing="SineEaseInOut">
+                    <KeyFrame Cue="0%"><Setter Property="Opacity" Value="0.2"/></KeyFrame>
+                    <KeyFrame Cue="40%"><Setter Property="Opacity" Value="1.0"/></KeyFrame>
+                    <KeyFrame Cue="100%"><Setter Property="Opacity" Value="0.2"/></KeyFrame>
+                </Animation>
+            </Style.Animations>
+        </Style>
+        <Style Selector="Ellipse.pulse-dot-2">
+            <Style.Animations>
+                <Animation Duration="0:0:1.2" Delay="0:0:0.2" IterationCount="Infinite" Easing="SineEaseInOut">
+                    <KeyFrame Cue="0%"><Setter Property="Opacity" Value="0.2"/></KeyFrame>
+                    <KeyFrame Cue="40%"><Setter Property="Opacity" Value="1.0"/></KeyFrame>
+                    <KeyFrame Cue="100%"><Setter Property="Opacity" Value="0.2"/></KeyFrame>
+                </Animation>
+            </Style.Animations>
+        </Style>
+        <Style Selector="Ellipse.pulse-dot-3">
+            <Style.Animations>
+                <Animation Duration="0:0:1.2" Delay="0:0:0.4" IterationCount="Infinite" Easing="SineEaseInOut">
+                    <KeyFrame Cue="0%"><Setter Property="Opacity" Value="0.2"/></KeyFrame>
+                    <KeyFrame Cue="40%"><Setter Property="Opacity" Value="1.0"/></KeyFrame>
+                    <KeyFrame Cue="100%"><Setter Property="Opacity" Value="0.2"/></KeyFrame>
+                </Animation>
+            </Style.Animations>
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="*,Auto">
+
+        <!-- Main area: framebuffer + overlays + chat (all overlapping) -->
+        <Grid Grid.Row="0">
+
+            <!-- RDP framebuffer -->
+            <controls:FramebufferControl x:Name="FramebufferCtrl"
+                                          FrameData="{Binding CurrentFrame}"
+                                          Focusable="True"
+                                          HorizontalAlignment="Stretch"
+                                          VerticalAlignment="Stretch"/>
+
+            <!-- Transparent overlay: cursor trails, click rings -->
+            <controls:RdpOverlayControl x:Name="OverlayControl"
+                                         Items="{Binding OverlayItems}"
+                                         HorizontalAlignment="Stretch"
+                                         VerticalAlignment="Stretch"
+                                         IsHitTestVisible="False"/>
+
+            <!-- Floating chat panel card, anchored top-right -->
+            <Border HorizontalAlignment="Right"
+                    VerticalAlignment="Stretch"
+                    IsVisible="{Binding IsPanelVisible}"
+                    Margin="0,16,10,16"
+                    CornerRadius="14"
+                    ClipToBounds="True"
+                    BorderBrush="#76FFFFFF"
+                    BorderThickness="1"
+                    BoxShadow="-2 0 18 0 #36000000, 0 12 36 0 #52000000">
+                <Grid ColumnDefinitions="42,Auto">
+                    <controls:BackdropBlurControl x:Name="ChatBackdropBlur"
+                                                  Grid.ColumnSpan="2"
+                                                  FrameData="{Binding CurrentFrame}"
+                                                  HorizontalAlignment="Stretch"
+                                                  VerticalAlignment="Stretch"
+                                                  IsHitTestVisible="False">
+                        <controls:BackdropBlurControl.Material>
+                            <ExperimentalAcrylicMaterial TintColor="#90BFE4"
+                                                         TintOpacity="0.22"
+                                                         MaterialOpacity="0.26"
+                                                         PlatformTransparencyCompensationLevel="0"
+                                                         FallbackColor="#4C6F90AC"/>
+                        </controls:BackdropBlurControl.Material>
+                    </controls:BackdropBlurControl>
+
+                    <!-- Left icon strip (always visible) -->
+                    <Border Grid.Column="0"
+                            CornerRadius="16,0,0,16">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                                <GradientStop Color="#B039193A" Offset="0"/>
+                                <GradientStop Color="#CC152638" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <DockPanel LastChildFill="True">
+
+                            <!-- Chat tab -->
+                            <Button DockPanel.Dock="Top"
+                                    Classes="strip-icon"
+                                    Classes.active="{Binding IsChatPaneActive}"
+                                    Command="{Binding ShowChatCommand}"
+                                    Width="42" Height="48"
+                                    ToolTip.Tip="Chat">
+                                <Path Data="{x:Static core:Icons.Chat}"
+                                      Fill="{Binding $parent[Button].Foreground}"
+
+                                      Width="16" Height="16"
+                                      Stretch="Uniform"/>
+                            </Button>
+
+                            <!-- History tab -->
+                            <Button DockPanel.Dock="Top"
+                                    Classes="strip-icon"
+                                    Classes.active="{Binding IsHistoryPaneActive}"
+                                    Command="{Binding ShowHistoryCommand}"
+                                    Width="42" Height="48"
+                                    ToolTip.Tip="Session history">
+                                <Path Data="{x:Static core:Icons.History}"
+                                      Fill="{Binding $parent[Button].Foreground}"
+
+                                      Width="16" Height="16"
+                                      Stretch="Uniform"/>
+                            </Button>
+
+                            <!-- Settings tab -->
+                            <Button DockPanel.Dock="Top"
+                                    Classes="strip-icon"
+                                    Classes.active="{Binding IsSettingsPaneActive}"
+                                    Command="{Binding ShowSettingsCommand}"
+                                    Width="42" Height="48"
+                                    ToolTip.Tip="Settings">
+                                <Path Data="{x:Static core:Icons.Settings}"
+                                      Fill="{Binding $parent[Button].Foreground}"
+                                      Width="16" Height="16"
+                                      Stretch="Uniform"/>
+                            </Button>
+
+                            <!-- Collapse button: fills remaining strip space -->
+                            <Button DockPanel.Dock="Bottom"
+                                    Command="{Binding TogglePanelCommand}"
+                                    Width="42" Height="48"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    Padding="0"
+                                    Margin="0,0,0,104"
+                                    HorizontalContentAlignment="Center"
+                                    VerticalContentAlignment="Center"
+                                    ToolTip.Tip="Hide panel">
+                                <TextBlock Text="»" FontSize="13" Foreground="#F6FAFF"/>
+                            </Button>
+
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Content panels: chat and history share column 1, only one visible at a time -->
+                    <Grid Grid.Column="1"
+                          Width="306">
+
+                        <!-- Chat panel -->
+                        <Border IsVisible="{Binding IsChatPaneActive}"
+                                CornerRadius="0,16,16,0"
+                                ClipToBounds="True">
+                            <Grid RowDefinitions="Auto,*,Auto,Auto">
+                                <Border Grid.RowSpan="4">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                                            <GradientStop Color="#C00C1824" Offset="0"/>
+                                            <GradientStop Color="#B0152638" Offset="0.48"/>
+                                            <GradientStop Color="#C0101E2E" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                </Border>
+
+                                <!-- Header -->
+                                <Border Grid.Row="0"
+                                        Padding="16,12,12,10"
+                                        CornerRadius="0,16,0,0">
+                                    <Grid ColumnDefinitions="*,Auto,Auto">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="Session Chat"
+                                                   FontSize="13"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#F8FBFF"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding TokenCountText}"
+                                                   IsVisible="{Binding TokenCountText, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                                   FontSize="11"
+                                                   Foreground="#A0B8D0"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,0,4,0"/>
+                                    </Grid>
+                                </Border>
+
+                                <!-- Chat item list -->
+                                <ScrollViewer x:Name="ChatScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                                    <Panel MinHeight="{Binding $parent[ScrollViewer].Bounds.Height}">
+                                    <ItemsControl VerticalAlignment="Bottom" ItemsSource="{Binding ChatItems}" Margin="10,10,10,6">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:ChatItemViewModel">
+                                                <Border Classes="chat-bubble"
+                                                        Classes.user="{Binding IsUserPrompt}"
+                                                        Margin="0,4"
+                                                        Padding="10,9"
+                                                        CornerRadius="8"
+                                                        Background="{Binding BubbleBackground}">
+                                                    <Grid ColumnDefinitions="Auto,*">
+                                                        <Border Grid.Column="0"
+                                                                IsVisible="{Binding IsActionItem}"
+                                                                Width="16"
+                                                                Height="16"
+                                                                CornerRadius="8"
+                                                                Background="#18FFFFFF"
+                                                                Margin="0,0,8,0"
+                                                                VerticalAlignment="Top">
+                                                            <TextBlock Text="{Binding ActionIcon}"
+                                                                       FontSize="10"
+                                                                       FontWeight="Bold"
+                                                                       Foreground="{Binding LabelColor}"
+                                                                       HorizontalAlignment="Center"
+                                                                       VerticalAlignment="Center"/>
+                                                        </Border>
+                                                        <StackPanel Grid.Column="1" Spacing="5">
+                                                            <TextBlock IsVisible="{Binding ShowLabel}"
+                                                                       Text="{Binding KindLabel}"
+                                                                       FontSize="10"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="{Binding LabelColor}"/>
+                                                            <TextBlock IsVisible="{Binding !IsMarkdownKind}"
+                                                                       Text="{Binding Text}"
+                                                                       FontSize="{Binding TextSize}"
+                                                                       FontFamily="{Binding FontFamily}"
+                                                                       TextWrapping="Wrap"
+                                                                       Foreground="#F8FBFF"/>
+                                                            <ContentControl IsVisible="{Binding IsMarkdownKind}"
+                                                                              Foreground="#F8FBFF">
+                                                                <md:MarkdownScrollViewer Markdown="{Binding Text}"/>
+                                                            </ContentControl>
+                                                            <TextBlock Text="{Binding MetaText}"
+                                                                       IsVisible="{Binding !IsActionItem}"
+                                                                       FontSize="10"
+                                                                       Foreground="#DDEBFA"/>
+                                                            <Button IsVisible="{Binding HasDetails}"
+                                                                    Command="{Binding ToggleExpandedCommand}"
+                                                                    Content="{Binding ExpandLabel}"
+                                                                    Background="Transparent"
+                                                                    BorderThickness="0"
+                                                                    Padding="0,1,0,0"
+                                                                    FontSize="10"
+                                                                    Foreground="#DDEBFA"
+                                                                    HorizontalAlignment="Left"
+                                                                    Cursor="Hand"/>
+                                                            <TextBlock IsVisible="{Binding IsExpanded}"
+                                                                       Text="{Binding Details}"
+                                                                       FontSize="11"
+                                                                       TextWrapping="Wrap"
+                                                                       Foreground="#EAF3FF"/>
+                                                            <StackPanel IsVisible="{Binding ShowApprovalButtons}"
+                                                                        Orientation="Horizontal"
+                                                                        Spacing="6" Margin="0,4,0,0">
+                                                                <Button Content="Allow Once"
+                                                                        Command="{Binding AllowOnceCommand}"
+                                                                        Background="#0e639c" Foreground="White"
+                                                                        FontSize="11" Padding="8,4" CornerRadius="4"/>
+                                                                <Button Content="Session"
+                                                                        Command="{Binding AllowSessionCommand}"
+                                                                        Background="#16825d" Foreground="White"
+                                                                        FontSize="11" Padding="8,4" CornerRadius="4"/>
+                                                                <Button Content="Deny"
+                                                                        Command="{Binding DenyCommand}"
+                                                                        Background="#5a1d1d" Foreground="White"
+                                                                        FontSize="11" Padding="8,4" CornerRadius="4"/>
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    </Panel>
+                                </ScrollViewer>
+
+                                <!-- Pulsing indicator while agent is running -->
+                                <Border Grid.Row="2"
+                                        IsVisible="{Binding IsAgentRunning}"
+                                        Margin="10,0,10,6"
+                                        HorizontalAlignment="Left">
+                                    <StackPanel Orientation="Horizontal" Spacing="4">
+                                        <Ellipse Classes="pulse-dot"             Width="6" Height="6" Fill="#EAF3FF"/>
+                                        <Ellipse Classes="pulse-dot pulse-dot-2" Width="6" Height="6" Fill="#EAF3FF"/>
+                                        <Ellipse Classes="pulse-dot pulse-dot-3" Width="6" Height="6" Fill="#EAF3FF"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Input area -->
+                                <Border Grid.Row="3"
+                                        BorderBrush="#35FFFFFF"
+                                        BorderThickness="0,1,0,0"
+                                        CornerRadius="0,0,16,0"
+                                        Padding="10,10,12,12">
+                                    <StackPanel>
+                                        <!-- Command autocomplete -->
+                                        <Border IsVisible="{Binding IsCommandSuggestionsVisible}"
+                                                Background="#D0111D2B"
+                                                BorderBrush="#40FFFFFF"
+                                                BorderThickness="1"
+                                                CornerRadius="7"
+                                                Margin="0,0,8,6"
+                                                MaxHeight="160">
+                                            <ListBox x:Name="CommandSuggestList"
+                                                     ItemsSource="{Binding CommandSuggestions}"
+                                                     Background="Transparent"
+                                                     Padding="4"
+                                                     SelectionChanged="OnCommandSuggestionSelected">
+                                                <ListBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding StringFormat='/{0}'}"
+                                                                   Foreground="#EAF3FF"
+                                                                   FontSize="12"
+                                                                   Padding="4,2"/>
+                                                    </DataTemplate>
+                                                </ListBox.ItemTemplate>
+                                            </ListBox>
+                                        </Border>
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <Border Grid.Column="0"
+                                                Margin="0,0,8,0"
+                                                MaxHeight="120"
+                                                Background="#38111D2B"
+                                                BorderBrush="#62FFFFFF"
+                                                BorderThickness="1"
+                                                CornerRadius="7"
+                                                BoxShadow="0 4 14 0 #18000000">
+                                            <TextBox Classes="chat-input"
+                                                     Text="{Binding PromptText}"
+                                                     PlaceholderText="Ask the agent..."
+                                                     AcceptsReturn="False"
+                                                     TextWrapping="Wrap"
+                                                     FontSize="12"
+                                                     KeyDown="OnPromptKeyDown"/>
+                                        </Border>
+                                        <StackPanel Grid.Column="1" Orientation="Vertical" Spacing="4">
+                                            <Button Content="■"
+                                                    Command="{Binding StopAgentCommand}"
+                                                    IsVisible="{Binding IsAgentRunning}"
+                                                    Background="#A82939"
+                                                    BorderBrush="#55FFFFFF"
+                                                    BorderThickness="1"
+                                                    Foreground="White"
+                                                    Width="30" Height="30"
+                                                    CornerRadius="6"
+                                                    Padding="0"
+                                                    FontSize="10"
+                                                    HorizontalContentAlignment="Center"
+                                                    VerticalContentAlignment="Center"/>
+                                            <Button Content="››"
+                                                    Command="{Binding SendPromptCommand}"
+                                                    IsVisible="{Binding IsAgentRunning, Converter={x:Static BoolConverters.Not}}"
+                                                    Background="#901070"
+                                                    BorderBrush="#65FFFFFF"
+                                                    BorderThickness="1"
+                                                    Foreground="White"
+                                                    Width="30" Height="30"
+                                                    CornerRadius="6"
+                                                    Padding="0"
+                                                    FontSize="20"
+                                                    HorizontalContentAlignment="Center"
+                                                    VerticalContentAlignment="Center"/>
+                                        </StackPanel>
+                                    </Grid>
+                                    </StackPanel>
+                                </Border>
+
+                            </Grid>
+                        </Border>
+
+                        <!-- Settings panel -->
+                        <Border IsVisible="{Binding IsSettingsPaneActive}"
+                                CornerRadius="0,16,16,0"
+                                ClipToBounds="True">
+                            <Grid RowDefinitions="Auto,*">
+                                <Border Grid.RowSpan="2">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                                            <GradientStop Color="#C00C1824" Offset="0"/>
+                                            <GradientStop Color="#B0152638" Offset="0.48"/>
+                                            <GradientStop Color="#C0101E2E" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                </Border>
+
+                                <Border Grid.Row="0" Padding="16,12,12,10" CornerRadius="0,16,0,0">
+                                    <TextBlock Text="Settings"
+                                               FontSize="13" FontWeight="SemiBold"
+                                               Foreground="#F8FBFF" VerticalAlignment="Center"/>
+                                </Border>
+
+                                <StackPanel Grid.Row="1" Margin="12,4,12,12" Spacing="16">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="TOOL POLICY"
+                                                   FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="#6090B0"/>
+                                        <ComboBox ItemsSource="{Binding AvailablePolicies}"
+                                                  SelectedItem="{Binding SelectedPolicy}"
+                                                  HorizontalAlignment="Stretch">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="policies:ToolPolicy">
+                                                    <TextBlock Text="{Binding Name}" Foreground="#F8FBFF"/>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                        <TextBlock Text="{Binding SelectedPolicy.Description}"
+                                                   IsVisible="{Binding SelectedPolicy.Description, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                                   FontSize="11" Foreground="#6090B0"
+                                                   TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- History panel -->
+                        <Border IsVisible="{Binding IsHistoryPaneActive}"
+                                CornerRadius="0,16,16,0"
+                                ClipToBounds="True">
+                            <Grid RowDefinitions="Auto,Auto,*">
+                                <Border Grid.RowSpan="3">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                                            <GradientStop Color="#C00C1824" Offset="0"/>
+                                            <GradientStop Color="#B0152638" Offset="0.48"/>
+                                            <GradientStop Color="#C0101E2E" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                </Border>
+
+                                <!-- Header -->
+                                <Border Grid.Row="0" Padding="16,12,12,10" CornerRadius="0,16,0,0">
+                                    <TextBlock Text="Session History"
+                                               FontSize="13"
+                                               FontWeight="SemiBold"
+                                               Foreground="#F8FBFF"
+                                               VerticalAlignment="Center"/>
+                                </Border>
+
+                                <!-- Stats block -->
+                                <Border Grid.Row="1"
+                                        Margin="10,0,10,8"
+                                        Padding="12,10"
+                                        Background="#1AFFFFFF"
+                                        BorderBrush="#28FFFFFF"
+                                        BorderThickness="1"
+                                        CornerRadius="8">
+                                    <Grid ColumnDefinitions="*,Auto,Auto" RowDefinitions="Auto,Auto,Auto">
+
+                                        <TextBlock Grid.Row="0" Grid.Column="0"
+                                                   Text="Screenshots" FontSize="11" Foreground="#90B8D8"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="1"
+                                                   Text="{Binding ScreenshotCountText}"
+                                                   FontSize="11" Foreground="#D0E8FF"
+                                                   Margin="12,0,0,0" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Row="0" Grid.Column="2"
+                                                   Text="{Binding ScreenshotTokenText}"
+                                                   FontSize="11" Foreground="#80A8C8"
+                                                   Margin="8,0,0,0" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+
+                                        <TextBlock Grid.Row="1" Grid.Column="0"
+                                                   Text="Cached" FontSize="11" Foreground="#90B8D8"
+                                                   Margin="0,7,0,0" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Row="1" Grid.Column="2"
+                                                   Text="{Binding CachedTokenText}"
+                                                   FontSize="11" Foreground="#80A8C8"
+                                                   Margin="8,7,0,0" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+
+                                        <TextBlock Grid.Row="2" Grid.Column="0"
+                                                   Text="System + Skills" FontSize="11" Foreground="#90B8D8"
+                                                   Margin="0,7,0,0" VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Row="2" Grid.Column="2"
+                                                   Text="{Binding SystemTokenText}"
+                                                   FontSize="11" Foreground="#80A8C8"
+                                                   Margin="8,7,0,0" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+
+                                    </Grid>
+                                </Border>
+
+                                <!-- Event log -->
+                                <ScrollViewer x:Name="HistoryScrollViewer" Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl ItemsSource="{Binding HistoryItems}" Margin="12,4,12,12">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:LogItem">
+                                                <Grid ColumnDefinitions="16,*" Margin="0,3">
+                                                    <TextBlock Grid.Column="0"
+                                                               Text="{Binding Icon}"
+                                                               FontSize="10"
+                                                               Foreground="#6090B0"
+                                                               VerticalAlignment="Top"
+                                                               HorizontalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="1"
+                                                               Text="{Binding Text}"
+                                                               FontSize="11"
+                                                               Foreground="#B0CCE8"
+                                                               TextWrapping="Wrap"
+                                                               Margin="6,0,0,0"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+
+                            </Grid>
+                        </Border>
+
+                    </Grid>
+
+                </Grid>
+            </Border>
+
+            <!-- Pull-tab: replaces the panel when closed, vertically centred at the right edge.
+                 Border owns the visuals; Button inside handles the click. -->
+            <Border HorizontalAlignment="Right"
+                    VerticalAlignment="Center"
+                    IsVisible="{Binding !IsPanelVisible}"
+                    Width="22"
+                    Height="60"
+                    CornerRadius="8,0,0,8"
+                    BorderBrush="#76FFFFFF"
+                    BorderThickness="1,1,0,1"
+                    ClipToBounds="True">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                        <GradientStop Color="#CC152638" Offset="0"/>
+                        <GradientStop Color="#B039193A" Offset="1"/>
+                    </LinearGradientBrush>
+                </Border.Background>
+                <Button Classes="strip-icon"
+                        Command="{Binding TogglePanelCommand}"
+                        Width="22"
+                        Height="60"
+                        Padding="0"
+                        HorizontalContentAlignment="Center"
+                        VerticalContentAlignment="Center"
+                        ToolTip.Tip="Open panel">
+                    <TextBlock Text="«" FontSize="13" Foreground="#F6FAFF"/>
+                </Button>
+            </Border>
+
+        </Grid>
+
+        <!-- Bottom toolbar -->
+        <Border Grid.Row="1"
+                Background="#F0F0F0"
+                BorderBrush="#CCCCCC"
+                BorderThickness="0,1,0,0"
+                Padding="8,5">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="2">
+                    <TextBlock Text="Mode:" VerticalAlignment="Center" Margin="0,0,8,0" Foreground="#555555" FontSize="12"/>
+                    <Button Content="Observe"
+                            Classes="modeBtn"
+                            Classes.active="{Binding IsObserveMode}"
+                            Command="{Binding SetObserveModeCommand}"
+                            FontSize="12" Padding="10,4" Margin="0,0,2,0"/>
+                    <Button Content="Manual"
+                            Classes="modeBtn"
+                            Classes.active="{Binding IsManualMode}"
+                            Command="{Binding SetManualModeCommand}"
+                            FontSize="12" Padding="10,4"/>
+                </StackPanel>
+
+                <TextBlock Grid.Column="1"
+                           Text="{Binding State}"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Foreground="#666666" FontSize="12"/>
+
+                <Button Grid.Column="2"
+                        Content="Disconnect"
+                        Command="{Binding DisconnectCommand}"
+                        Background="Transparent"
+                        BorderBrush="#CCCCCC"
+                        BorderThickness="1"
+                        Padding="12,4"
+                        CornerRadius="3"
+                        FontSize="12"/>
+            </Grid>
+        </Border>
+
+    </Grid>
+</UserControl>

@@ -1,0 +1,26 @@
+LIBRARY freerdp3
+EXPORTS
+  freerdp_new
+  freerdp_free
+  freerdp_context_new
+  freerdp_context_free
+  freerdp_connect
+  freerdp_disconnect
+  freerdp_shall_disconnect_context
+  freerdp_check_event_handles
+  freerdp_settings_set_string
+  freerdp_settings_set_uint16
+  freerdp_settings_set_uint32
+  freerdp_settings_set_bool
+  freerdp_get_last_error
+  freerdp_get_last_error_name
+  freerdp_get_last_error_string
+  freerdp_settings_get_string
+  freerdp_input_send_keyboard_event
+  freerdp_input_send_unicode_keyboard_event
+  freerdp_input_send_mouse_event
+  freerdp_input_send_extended_mouse_event
+  gdi_init
+  gdi_free
+  jabsco_get_settings
+  jabsco_test_getaddrinfo
