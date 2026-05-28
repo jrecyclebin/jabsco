@@ -14,6 +14,12 @@ public static class ConfigLoader
         # Your Anthropic API key. Overrides the ANTHROPIC_API_KEY environment variable.
         # anthropic_api_key = "sk-ant-..."
 
+        # Your Google AI Studio API key for Gemini models. Overrides GOOGLE_API_KEY.
+        # gemini_api_key = "AIza..."
+
+        # Model to use across all LLM providers (overrides --model and built-in defaults).
+        # model_id = "claude-opus-4-7"
+
         # [agent]
         # Override the default system prompt sent to the model.
         # system_prompt = """
@@ -33,6 +39,13 @@ public static class ConfigLoader
         # Tool approval policy: "allow" auto-approves all tool calls, "deny" blocks them.
         # tool_policy = "allow"
         #
+        # Screenshot strategy: "latest_only" (default) sends only the current screenshot each turn.
+        # "cache_aware" keeps the last 3 screenshots and adds cache_control breakpoints for prompt caching.
+        # model_strategy = "cache_aware"
+        #
+        # Extended thinking effort: "low" (default), "high" (best accuracy), or "off".
+        # thinking = "low"
+        #
         # [feature]
         # Enable experimental features.
         # hyperv = true
@@ -46,7 +59,7 @@ public static class ConfigLoader
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, DefaultTemplate);
-            return new JabscoConfig(null, new AgentConfig(null, null, null, null, null), new FeatureFlags());
+            return new JabscoConfig(null, null, null, new AgentConfig(null, null, null, null, null), new FeatureFlags());
         }
 
         var content = File.ReadAllText(path);
@@ -60,14 +73,34 @@ public static class ConfigLoader
 
         var a = dto?.agent;
         var f = dto?.feature;
+
+        ModelStrategy? modelStrategy = a?.model_strategy?.ToLowerInvariant() switch
+        {
+            "cache_aware" or "cacheaware" => ModelStrategy.CacheAware,
+            "latest_only" or "latestonly" => ModelStrategy.LatestOnly,
+            _ => null
+        };
+
+        ThinkingMode? thinking = a?.thinking?.ToLowerInvariant() switch
+        {
+            "off"  => ThinkingMode.Off,
+            "low"  => ThinkingMode.Low,
+            "high" => ThinkingMode.High,
+            _ => null
+        };
+
         return new JabscoConfig(
             dto?.anthropic_api_key,
+            dto?.gemini_api_key,
+            dto?.model_id,
             new AgentConfig(
                 a?.system_prompt,
                 a?.max_steps,
                 a?.post_action_delay_ms,
                 a?.time_budget_seconds,
-                a?.tool_policy),
+                a?.tool_policy,
+                modelStrategy,
+                thinking),
             new FeatureFlags(
                 HyperV: f?.hyperv ?? false));
     }
@@ -76,6 +109,8 @@ public static class ConfigLoader
     private sealed class ConfigDto
     {
         public string? anthropic_api_key { get; set; }
+        public string? gemini_api_key { get; set; }
+        public string? model_id { get; set; }
         public AgentDto? agent { get; set; }
         public FeatureDto? feature { get; set; }
     }
@@ -92,5 +127,7 @@ public static class ConfigLoader
         public int? post_action_delay_ms { get; set; }
         public int? time_budget_seconds { get; set; }
         public string? tool_policy { get; set; }
+        public string? model_strategy { get; set; }
+        public string? thinking { get; set; }
     }
 }

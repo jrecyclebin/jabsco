@@ -1,7 +1,14 @@
 namespace Jabsco.Core.Config;
 
+public enum ModelStrategy { LatestOnly, CacheAware }
+
+// Adaptive thinking effort level sent to the model. Low and High map directly to the effort strings.
+public enum ThinkingMode { Off, Low, High }
+
 public sealed record JabscoConfig(
     string? AnthropicApiKey,
+    string? GeminiApiKey,
+    string? ModelId,
     AgentConfig Agent,
     FeatureFlags Features);
 
@@ -13,4 +20,6 @@ public sealed record AgentConfig(
     int? MaxSteps,
     int? PostActionDelayMs,
     int? TimeBudgetSeconds,
-    string? ToolPolicy);
+    string? ToolPolicy,
+    ModelStrategy? ModelStrategy = null,
+    ThinkingMode? Thinking = null);

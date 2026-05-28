@@ -44,6 +44,7 @@ public sealed class AgentLoop
         var currentTurns = new List<ToolTurn>();
         StoppedReason stopped = StoppedReason.ModelDone;
         int cursorX = -1, cursorY = -1;
+        byte[]? lastAnnotatedPng = null;
 
         while (true)
         {
@@ -60,12 +61,12 @@ public sealed class AgentLoop
             catch (Exception ex) { err = new ErrorEvent(ex.Message, ex.GetType().Name, DateTimeOffset.UtcNow, step); png = []; }
             if (err != null) { yield return err; yield break; }
 
-            yield return new ScreenshotEvent(png, DateTimeOffset.UtcNow, step);
-
             // Annotate with agent cursor so the model can see its own position
             var annotated = cursorX >= 0 ? DrawCursorOnPng(png, cursorX, cursorY) : png;
+            lastAnnotatedPng = annotated;
+            yield return new ScreenshotEvent(annotated, DateTimeOffset.UtcNow, step);
 
-            var request = new ProviderRequest(annotated, prompt, _history, currentTurns, new ProviderOptions());
+            var request = new ProviderRequest(annotated, prompt, _history, currentTurns, new ProviderOptions(Strategy: options.ModelStrategy));
             ProviderResponse? response = null;
             err = null;
             try { response = await _provider.NextActionAsync(request, ct); }
@@ -82,7 +83,7 @@ public sealed class AgentLoop
 
             if (response.Action is DoneAction done)
             {
-                _history.Add(new ConversationTurn(prompt, currentTurns, done.Response));
+                _history.Add(new ConversationTurn(prompt, currentTurns, done.Response, lastAnnotatedPng));
                 var stats = new AgentStats(step, (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds, inputTokens, outputTokens, cachedInputTokens, _provider.ModelId, StoppedReason.ModelDone);
                 yield return new FinalEvent(done.Response, stats, DateTimeOffset.UtcNow, step);
                 yield break;
@@ -97,7 +98,7 @@ public sealed class AgentLoop
 
                 if (decision == ToolDecision.Deny)
                 {
-                    currentTurns.Add(new ToolTurn(response.Action, "denied by policy", response.ToolUseId));
+                    currentTurns.Add(new ToolTurn(response.Action, "denied by policy", response.ToolUseId!));
                     yield return new ToolResultEvent("denied by policy", DateTimeOffset.UtcNow, step);
                     continue;
                 }
@@ -111,7 +112,7 @@ public sealed class AgentLoop
                     var sinkDecision = await _approval.RequestAsync(ActionToolName(response.Action), payloadStr, TimeSpan.FromSeconds(30), ct);
                     if (sinkDecision == ToolDecision.Deny)
                     {
-                        currentTurns.Add(new ToolTurn(response.Action, "denied by user", response.ToolUseId));
+                        currentTurns.Add(new ToolTurn(response.Action, "denied by user", response.ToolUseId!));
                         yield return new ToolResultEvent("denied by user", DateTimeOffset.UtcNow, step);
                         continue;
                     }
@@ -134,7 +135,7 @@ public sealed class AgentLoop
                 _                 => (cursorX, cursorY)
             };
 
-            currentTurns.Add(new ToolTurn(response.Action, summary, response.ToolUseId));
+            currentTurns.Add(new ToolTurn(response.Action, summary, response.ToolUseId!));
 
             if (options.PostActionDelay > TimeSpan.Zero)
             {
@@ -146,7 +147,7 @@ public sealed class AgentLoop
         }
 
         if (currentTurns.Count > 0)
-            _history.Add(new ConversationTurn(prompt, currentTurns, FinalResponse: null));
+            _history.Add(new ConversationTurn(prompt, currentTurns, FinalResponse: null, lastAnnotatedPng));
 
         var finalStats = new AgentStats(step, (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds, inputTokens, outputTokens, cachedInputTokens, _provider.ModelId, stopped);
         yield return new FinalEvent(string.Empty, finalStats, DateTimeOffset.UtcNow, step);
@@ -162,6 +163,7 @@ public sealed class AgentLoop
         DragAction       => "drag",
         ScreenshotAction => "screenshot",
         LoadSkillAction  => "load_skill",
+        WaitAction       => "wait",
         _                => action.GetType().Name.ToLowerInvariant()
     };
 
@@ -199,6 +201,7 @@ public sealed class AgentLoop
     private async Task<string> ExecuteActionAsync(AgentAction action, CancellationToken ct) => action switch
     {
         ScreenshotAction => "screenshot taken",
+        WaitAction w => await ExecuteWaitAsync(w, ct),
         LoadSkillAction ls => ExecuteLoadSkill(ls),
         ClickAction c => await ExecuteClickAsync(c, ct),
         MouseMoveAction m => await ExecuteMouseMoveAsync(m, ct),
@@ -208,6 +211,12 @@ public sealed class AgentLoop
         TypeAction t => await ExecuteTypeAsync(t, ct),
         _ => "unknown action"
     };
+
+    private static async Task<string> ExecuteWaitAsync(WaitAction w, CancellationToken ct)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(w.Seconds), ct);
+        return $"waited {w.Seconds}s";
+    }
 
     private static string ExecuteLoadSkill(LoadSkillAction ls)
     {

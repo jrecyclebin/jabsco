@@ -140,68 +140,120 @@
                                 <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding NewPassword}"
                                          PasswordChar="●" PlaceholderText="optional"/>
                             </Grid>
+                            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                                <CheckBox Grid.Row="0" Grid.Column="0"
+                                          IsChecked="{Binding SaveCredentials}"
+                                          IsVisible="{Binding HasPassword}"
+                                          Content="Save password" FontSize="12" VerticalAlignment="Center"/>
+                                <Button Grid.Row="1" Grid.Column="1"
+                                        Content="{Binding ConnectButtonText}"
+                                        Command="{Binding ConnectNewCommand}"
+                                        HorizontalAlignment="Right"
+                                        Background="#7B2FBE" Foreground="White"
+                                        Padding="24,7" CornerRadius="3"/>
+                            </Grid>
                         </StackPanel>
 
                         <!-- Hyper-V form -->
                         <StackPanel Spacing="10" IsVisible="{Binding IsHyperVMode}">
-                            <Grid ColumnDefinitions="100,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
-                                <TextBlock Grid.Row="0" Grid.Column="0" Text="Host" VerticalAlignment="Center"/>
-                                <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding HyperVHost}"
-                                         PlaceholderText="localhost"/>
-                                <Button Grid.Row="0" Grid.Column="2"
-                                        Content="⟳" ToolTip.Tip="Refresh VM list"
-                                        Command="{Binding RefreshVmsCommand}"
-                                        IsEnabled="{Binding IsLoadingVms, Converter={x:Static BoolConverters.Not}}"
-                                        Padding="8,4" CornerRadius="3"/>
-                                <TextBlock Grid.Row="1" Grid.Column="0" Text="Username" VerticalAlignment="Center"/>
-                                <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding HyperVUsername}"
-                                         PlaceholderText="optional"/>
-                                <TextBlock Grid.Row="2" Grid.Column="0" Text="Password" VerticalAlignment="Center"/>
-                                <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding HyperVPassword}"
-                                         PasswordChar="●" PlaceholderText="optional"/>
-                                <TextBlock Grid.Row="3" Grid.Column="0" Text="VM" VerticalAlignment="Center"/>
-                                <ComboBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2"
-                                          ItemsSource="{Binding HyperVVms}"
-                                          SelectedItem="{Binding SelectedVm}"
-                                          HorizontalAlignment="Stretch"
-                                          PlaceholderText="{Binding VmListPlaceholderText}">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate x:DataType="vm:HyperVVmViewModel">
-                                            <TextBlock Text="{Binding DisplayText}"
-                                                       Opacity="{Binding ItemOpacity}"/>
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
-                                <TextBlock Grid.Row="4" Grid.Column="0" Text="VM GUID" VerticalAlignment="Center"/>
-                                <TextBox Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2"
-                                         Text="{Binding VmId}"
-                                         IsEnabled="{Binding IsVmIdEditable}"
-                                         PlaceholderText="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"/>
-                            </Grid>
+
+                            <!-- Phase 1: enter credentials -->
+                            <StackPanel Spacing="10"
+                                        IsVisible="{Binding IsVmHostConnected, Converter={x:Static BoolConverters.Not}}">
+                                <Grid ColumnDefinitions="100,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Host" VerticalAlignment="Center"/>
+                                    <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding HyperVHost}"
+                                             PlaceholderText="Hyper-V host address"/>
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Username" VerticalAlignment="Center"/>
+                                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding HyperVUsername}"
+                                             PlaceholderText="DOMAIN\username"/>
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Password" VerticalAlignment="Center"/>
+                                    <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding HyperVPassword}"
+                                             PasswordChar="●" PlaceholderText="optional"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                                    <CheckBox Grid.Row="0" Grid.Column="0"
+                                              IsChecked="{Binding SaveCredentials}"
+                                              IsVisible="{Binding HasPassword}"
+                                              Content="Save password" FontSize="12" VerticalAlignment="Center"/>
+                                    <Button Grid.Row="1" Grid.Column="1"
+                                            Content="{Binding HyperVConnectButtonText}"
+                                            Command="{Binding ConnectToHyperVHostCommand}"
+                                            HorizontalAlignment="Right"
+                                            Background="#7B2FBE" Foreground="White"
+                                            Padding="24,7" CornerRadius="3"/>
+                                </Grid>
+                            </StackPanel>
+
+                            <!-- Phase 2: VM list -->
+                            <StackPanel Spacing="10" IsVisible="{Binding IsVmHostConnected}">
+
+                                <!-- Connected host header -->
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <StackPanel Grid.Column="0" Spacing="1">
+                                        <TextBlock Text="CONNECTED TO" FontSize="10" FontWeight="SemiBold" Foreground="#888888"/>
+                                        <TextBlock Text="{Binding HyperVHost}" FontSize="13" FontWeight="SemiBold"/>
+                                    </StackPanel>
+                                    <Button Grid.Column="1" Content="Change"
+                                            Command="{Binding ChangeHyperVHostCommand}"
+                                            Background="Transparent" Foreground="#666666"
+                                            FontSize="12" Padding="0" VerticalAlignment="Center"/>
+                                </Grid>
+
+                                <!-- VMs label + refresh -->
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Grid.Column="0" Text="VIRTUAL MACHINES"
+                                               FontSize="10" FontWeight="SemiBold" Foreground="#888888"
+                                               VerticalAlignment="Center"/>
+                                    <Button Grid.Column="1" Content="⟳" ToolTip.Tip="Refresh VM list"
+                                            Command="{Binding RefreshVmsCommand}"
+                                            IsEnabled="{Binding IsLoadingVms, Converter={x:Static BoolConverters.Not}}"
+                                            Background="Transparent" Foreground="#666666"
+                                            Padding="6,2" FontSize="14"/>
+                                </Grid>
+
+                                <!-- VM list -->
+                                <Border Background="#E4E4E4" BorderBrush="#C0C0C0" BorderThickness="1" CornerRadius="4">
+                                    <ItemsControl ItemsSource="{Binding Vms}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:VmViewModel">
+                                                <Border BorderBrush="#CACACA" BorderThickness="0,0,0,1" Padding="10,8">
+                                                    <Grid ColumnDefinitions="*,Auto">
+                                                        <TextBlock Grid.Column="0"
+                                                                   Text="{Binding DisplayText}"
+                                                                   VerticalAlignment="Center"
+                                                                   Opacity="{Binding ItemOpacity}"
+                                                                   FontSize="13"/>
+                                                        <Button Grid.Column="1"
+                                                                IsVisible="{Binding CanConnect}"
+                                                                Content="Connect"
+                                                                Command="{Binding $parent[UserControl].((vm:ConnectionPanelViewModel)DataContext).ConnectVmCommand}"
+                                                                CommandParameter="{Binding}"
+                                                                Background="#7B2FBE" Foreground="White"
+                                                                Padding="12,4" CornerRadius="3" FontSize="11"/>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Border>
+
+                                <!-- Connect to host directly -->
+                                <Button Content="Connect to host directly"
+                                        Command="{Binding ConnectToHostDirectlyCommand}"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Background="#E4E4E4" Foreground="#444444"
+                                        Padding="0,8" CornerRadius="3"
+                                        BorderBrush="#C0C0C0" BorderThickness="1"/>
+                            </StackPanel>
+
                         </StackPanel>
 
-                        <!-- Error + connect -->
-                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
-                            <TextBlock Grid.Row="0" Grid.Column="0"
-                                       Text="{Binding ErrorMessage}"
-                                       Foreground="#C62828" FontSize="12"
-                                       TextWrapping="Wrap"
-                                       IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}"
-                                       Margin="0,0,0,6"/>
-                            <CheckBox Grid.Row="1" Grid.Column="0"
-                                      IsChecked="{Binding SaveCredentials}"
-                                      IsVisible="{Binding HasPassword}"
-                                      Content="Save password"
-                                      FontSize="12"
-                                      VerticalAlignment="Center"
-                                      Margin="0,0,0,6"/>
-                            <Button Grid.Row="2" Grid.Column="1"
-                                    Content="{Binding ConnectButtonText}"
-                                    Command="{Binding ConnectNewCommand}"
-                                    HorizontalAlignment="Right"
-                                    Background="#7B2FBE" Foreground="White"
-                                    Padding="24,7" CornerRadius="3"/>
-                        </Grid>
+                        <!-- Error display (shared) -->
+                        <TextBlock Text="{Binding ErrorMessage}"
+                                   Foreground="#C62828" FontSize="12"
+                                   TextWrapping="Wrap"
+                                   IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}"/>
 
                     </StackPanel>
                 </Border>

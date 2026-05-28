@@ -1,0 +1,20 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Jabsco.Ui.Views.ConfirmDialog"
+        Width="400" Height="155"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        ShowInTaskbar="False">
+    <StackPanel Margin="20" Spacing="16">
+        <TextBlock x:Name="MessageText" TextWrapping="Wrap" FontSize="13"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button x:Name="CancelBtn" Content="Cancel"
+                    Padding="16,6" MinWidth="80"
+                    Click="Cancel_Click"/>
+            <Button x:Name="ConfirmBtn"
+                    Background="#A52020" Foreground="White"
+                    Padding="16,6" MinWidth="80"
+                    Click="Confirm_Click"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

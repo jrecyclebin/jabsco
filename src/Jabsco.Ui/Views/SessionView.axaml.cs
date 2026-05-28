@@ -40,6 +40,16 @@ public partial class SessionView : UserControl
         {
             _vm.ChatItems.CollectionChanged    += OnChatItemsChanged;
             _vm.HistoryItems.CollectionChanged += OnHistoryItemsChanged;
+            _vm.ConfirmDisconnect = async () =>
+            {
+                var window = TopLevel.GetTopLevel(this) as Window;
+                if (window == null) return true;
+                var dialog = new ConfirmDialog(
+                    "Close Session",
+                    $"Disconnect from {_vm.Host}? The conversation cannot be resumed after disconnecting.",
+                    "Disconnect");
+                return await dialog.ShowDialog<bool>(window);
+            };
         }
     }
 

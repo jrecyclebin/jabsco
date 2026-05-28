@@ -490,6 +490,17 @@
                                                    FontSize="11" Foreground="#6090B0"
                                                    TextWrapping="Wrap"/>
                                     </StackPanel>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="MODEL STRATEGY"
+                                                   FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="#6090B0"/>
+                                        <ComboBox ItemsSource="{Binding AvailableModelStrategies}"
+                                                  SelectedItem="{Binding SelectedModelStrategy}"
+                                                  HorizontalAlignment="Stretch"/>
+                                        <TextBlock Text="{Binding ModelStrategyDescription}"
+                                                   FontSize="11" Foreground="#6090B0"
+                                                   TextWrapping="Wrap"/>
+                                    </StackPanel>
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -526,19 +537,30 @@
                                         BorderBrush="#28FFFFFF"
                                         BorderThickness="1"
                                         CornerRadius="8">
-                                    <Grid ColumnDefinitions="*,Auto,Auto" RowDefinitions="Auto,Auto,Auto">
+                                    <Grid ColumnDefinitions="*,Auto,Auto" RowDefinitions="Auto,Auto,Auto,Auto">
 
-                                        <TextBlock Grid.Row="0" Grid.Column="0"
-                                                   Text="Screenshots" FontSize="11" Foreground="#90B8D8"
-                                                   VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Row="0" Grid.Column="1"
-                                                   Text="{Binding ScreenshotCountText}"
-                                                   FontSize="11" Foreground="#D0E8FF"
-                                                   Margin="12,0,0,0" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Row="0" Grid.Column="2"
-                                                   Text="{Binding ScreenshotTokenText}"
-                                                   FontSize="11" Foreground="#80A8C8"
-                                                   Margin="8,0,0,0" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                        <!-- Screenshots row: click to expand thumbnails -->
+                                        <Button Grid.Row="0" Grid.ColumnSpan="3"
+                                                Command="{Binding ToggleScreenshotsExpandedCommand}"
+                                                Background="Transparent" BorderThickness="0"
+                                                Padding="0" Cursor="Hand"
+                                                HorizontalAlignment="Stretch"
+                                                HorizontalContentAlignment="Stretch">
+                                            <Grid ColumnDefinitions="*,Auto,Auto">
+                                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="3" VerticalAlignment="Center">
+                                                    <TextBlock Text="Screenshots" FontSize="11" Foreground="#90B8D8"/>
+                                                    <TextBlock Text="{Binding ScreenshotsChevron}" FontSize="9" Foreground="#90B8D8" VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding ScreenshotCountText}"
+                                                           FontSize="11" Foreground="#D0E8FF"
+                                                           Margin="12,0,0,0" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="2"
+                                                           Text="{Binding ScreenshotTokenText}"
+                                                           FontSize="11" Foreground="#80A8C8"
+                                                           Margin="8,0,0,0" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Button>
 
                                         <TextBlock Grid.Row="1" Grid.Column="0"
                                                    Text="Cached" FontSize="11" Foreground="#90B8D8"
@@ -555,6 +577,29 @@
                                                    Text="{Binding SystemTokenText}"
                                                    FontSize="11" Foreground="#80A8C8"
                                                    Margin="8,7,0,0" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+
+                                        <!-- Screenshot thumbnails (expanded) -->
+                                        <ItemsControl Grid.Row="3" Grid.ColumnSpan="3"
+                                                      IsVisible="{Binding IsScreenshotsExpanded}"
+                                                      ItemsSource="{Binding ContextScreenshots}"
+                                                      Margin="0,8,0,0">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Button Command="{ReflectionBinding DataContext.ZoomInCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                            CommandParameter="{ReflectionBinding}"
+                                                            Background="Transparent" BorderThickness="0"
+                                                            Padding="0" Cursor="Hand"
+                                                            HorizontalAlignment="Stretch"
+                                                            HorizontalContentAlignment="Stretch">
+                                                        <Image Source="{Binding Image}"
+                                                               Stretch="Uniform"
+                                                               HorizontalAlignment="Stretch"
+                                                               MaxHeight="120"
+                                                               Margin="0,2"/>
+                                                    </Button>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
 
                                     </Grid>
                                 </Border>
@@ -590,6 +635,21 @@
 
                 </Grid>
             </Border>
+
+            <!-- Zoom overlay: fullscreen lightbox shown when a thumbnail is clicked -->
+            <Grid IsVisible="{Binding IsZoomed}">
+                <Border Background="#D4000000"/>
+                <Button Command="{Binding DismissZoomCommand}"
+                        Background="Transparent" BorderThickness="0"
+                        Padding="20" Cursor="Hand"
+                        HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                        HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+                    <Image Source="{Binding ZoomedImage}"
+                           Stretch="Uniform"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"/>
+                </Button>
+            </Grid>
 
             <!-- Pull-tab: replaces the panel when closed, vertically centred at the right edge.
                  Border owns the visuals; Button inside handles the click. -->

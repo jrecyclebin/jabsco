@@ -6,7 +6,7 @@ using Jabsco.Core.Config;
 using Jabsco.Core.Credentials;
 using Jabsco.Core.Persistence;
 using Jabsco.Core.Persistence.Policies;
-using Jabsco.Core.Providers.Claude;
+using Jabsco.Core.Providers;
 using Jabsco.Core.Rdp;
 using Jabsco.Core.Skills;
 using Microsoft.Extensions.Logging;
@@ -29,8 +29,8 @@ public static class RunCommand
             { Description = "RDP password (defaults to saved profile)" };
         var apiKeyOpt = new Option<string?>("--api-key")
             { Description = "Anthropic API key (overrides config.toml and ANTHROPIC_API_KEY env var)" };
-        var modelOpt = new Option<string>("--model")
-            { Description = "Claude model ID", DefaultValueFactory = _ => "claude-opus-4-7" };
+        var modelOpt = new Option<string?>("--model")
+            { Description = "Model ID (overrides config.toml model_id)" };
         var maxStepsOpt = new Option<int>("--max-steps")
             { Description = "Maximum agent steps", DefaultValueFactory = _ => 100 };
         var quietOpt = new Option<bool>("--quiet")
@@ -50,7 +50,7 @@ public static class RunCommand
             var rawPrompt  = parseResult.GetRequiredValue(promptOpt);
             var username   = parseResult.GetValue(usernameOpt);
             var password   = parseResult.GetValue(passwordOpt);
-            var model      = parseResult.GetValue(modelOpt) ?? "claude-opus-4-7";
+            var modelArg   = parseResult.GetValue(modelOpt);
             var maxSteps   = parseResult.GetValue(maxStepsOpt);
             var quiet      = parseResult.GetValue(quietOpt);
             var onApproval = parseResult.GetValue(onApprovalOpt);
@@ -60,14 +60,10 @@ public static class RunCommand
             try { config = ConfigLoader.Load(); }
             catch (InvalidDataException ex) { Console.Error.WriteLine(ex.Message); return; }
 
-            var apiKey = parseResult.GetValue(apiKeyOpt)
-                ?? config.AnthropicApiKey
-                ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-            if (string.IsNullOrEmpty(apiKey))
-            {
-                Console.Error.WriteLine("No API key: set --api-key, anthropic_api_key in config.toml, or ANTHROPIC_API_KEY env var.");
-                return;
-            }
+            // --api-key overrides the Anthropic key in config
+            var apiKeyOverride = parseResult.GetValue(apiKeyOpt);
+            if (apiKeyOverride is not null)
+                config = config with { AnthropicApiKey = apiKeyOverride };
 
             // Load defaults from saved profile
             try
@@ -127,7 +123,10 @@ public static class RunCommand
                 _       => new DenyAllSink()
             };
 
-            using var provider = new ClaudeProvider(new ClaudeOptions(apiKey, Model: model, SystemPrompt: config.Agent.SystemPrompt));
+            IComputerUseProvider provider;
+            try { provider = ProviderFactory.Create(config, modelArg); }
+            catch (InvalidOperationException ex) { Console.Error.WriteLine(ex.Message); return; }
+            using var _ = provider as IDisposable;
             var loop = new AgentLoop(rdp, provider, approval);
             var opts = new AgentOptions(MaxSteps: maxSteps, PostActionDelay: TimeSpan.FromMilliseconds(800));
             var writer = new NdjsonEventWriter(Console.Out, quiet);

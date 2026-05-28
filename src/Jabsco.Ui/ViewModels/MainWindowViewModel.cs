@@ -39,6 +39,9 @@ public partial class MainWindowViewModel : ViewModelBase
         throw new PlatformNotSupportedException("Jabsco requires Windows, Linux, or macOS");
     }
 
+    // Set by MainWindow to show a confirmation dialog before closing a tab
+    internal Func<Task<bool>>? ConfirmCloseTab { get; set; }
+
     internal void AddSession(SessionTabViewModel tab)
     {
         // Wire disconnect so closing the session auto-removes the tab
@@ -68,6 +71,16 @@ public partial class MainWindowViewModel : ViewModelBase
         IsConnectionPanelActive = false;
     }
 
+    // Called by the ✕ tab button — asks for confirmation first
+    [RelayCommand]
+    private async Task RequestCloseTabAsync(SessionTabViewModel tab)
+    {
+        if (ConfirmCloseTab != null && !await ConfirmCloseTab())
+            return;
+        CloseTab(tab);
+    }
+
+    // Called programmatically after disconnect (already confirmed)
     [RelayCommand]
     private void CloseTab(SessionTabViewModel tab)
     {

@@ -5,10 +5,10 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Jabsco.Core.Config;
 using Jabsco.Core.Credentials;
-using Jabsco.Core.HyperV;
 using Jabsco.Core.Persistence;
 using Jabsco.Core.Persistence.Profiles;
 using Jabsco.Core.Rdp;
+using Jabsco.Core.VmHost;
 using Microsoft.Extensions.Logging;
 
 namespace Jabsco.Ui.ViewModels;
@@ -20,9 +20,10 @@ public partial class ConnectionPanelViewModel : ViewModelBase
     private JabscoDb? _db;
     private ICredentialStore? _credentials;
     private int? _editingProfileId;
+    private IVmHost? _vmHost;
 
     public ObservableCollection<RecentConnectionViewModel> RecentConnections { get; } = [];
-    public ObservableCollection<HyperVVmViewModel> HyperVVms { get; } = [];
+    public ObservableCollection<VmViewModel> Vms { get; } = [];
 
     public bool HasRecentConnections => RecentConnections.Count > 0;
     public bool IsEditingProfile => _editingProfileId.HasValue;
@@ -56,10 +57,10 @@ public partial class ConnectionPanelViewModel : ViewModelBase
     // ── Hyper-V form ──────────────────────────────────────────────────────────
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(ConnectNewCommand))]
     private bool _isHyperVMode;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ConnectToHyperVHostCommand))]
     private string _hyperVHost = "localhost";
 
     [ObservableProperty]
@@ -70,23 +71,15 @@ public partial class ConnectionPanelViewModel : ViewModelBase
     private string _hyperVPassword = "";
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(ConnectNewCommand))]
-    [NotifyPropertyChangedFor(nameof(IsVmIdEditable))]
-    private HyperVVmViewModel? _selectedVm;
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(VmListPlaceholderText))]
+    [NotifyPropertyChangedFor(nameof(HyperVConnectButtonText))]
+    [NotifyCanExecuteChangedFor(nameof(ConnectToHyperVHostCommand))]
     private bool _isLoadingVms;
 
-    // Editable only when the "Enter GUID manually" sentinel is selected.
-    public bool IsVmIdEditable => SelectedVm?.IsManualEntry == true;
-
-    public string VmListPlaceholderText => IsLoadingVms ? "Loading…" : "Select a VM";
-
-    // Shows the selected VM's GUID, or the user-typed value when manual entry is active.
+    // True once the host has been queried and the VM list is showing.
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(ConnectNewCommand))]
-    private string _vmId = "";
+    private bool _isVmHostConnected;
+
+    public string HyperVConnectButtonText => IsLoadingVms ? "Connecting…" : "Connect";
 
     // ── Shared ────────────────────────────────────────────────────────────────
 
@@ -138,20 +131,8 @@ public partial class ConnectionPanelViewModel : ViewModelBase
         });
     }
 
-    partial void OnIsHyperVModeChanged(bool value)
-    {
+    partial void OnIsHyperVModeChanged(bool value) =>
         OnPropertyChanged(nameof(HasPassword));
-        if (value) _ = RefreshVmsAsync();
-    }
-
-    partial void OnSelectedVmChanged(HyperVVmViewModel? value)
-    {
-        if (value is { IsManualEntry: false, Id: { } id })
-            VmId = id.ToString();
-        else if (value is null)
-            VmId = "";
-        // When switching to manual entry, preserve whatever was in VmId.
-    }
 
     [RelayCommand] private void SwitchToRdp()    => IsHyperVMode = false;
     [RelayCommand] private void SwitchToHyperV() => IsHyperVMode = true;
@@ -212,7 +193,6 @@ public partial class ConnectionPanelViewModel : ViewModelBase
 
         if (password == null)
         {
-            // No stored password — pre-fill the form so the user can enter one
             IsHyperVMode = false;
             NewHost = recent.Host;
             NewUsername = recent.Username ?? "";
@@ -225,52 +205,66 @@ public partial class ConnectionPanelViewModel : ViewModelBase
         await ConnectToAsync(recent.Host, recent.Username, password);
     }
 
+    // ── RDP connect ───────────────────────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(CanConnectNew))]
+    private Task ConnectNew() =>
+        ConnectToAsync(NewHost.Trim(), NewUsername.Trim().NullIfEmpty(), NewPassword.NullIfEmpty());
+
+    private bool CanConnectNew() => !IsConnecting && !string.IsNullOrWhiteSpace(NewHost);
+
+    // ── Hyper-V phase 1: connect to host ─────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(CanConnectToHyperVHost))]
+    private Task ConnectToHyperVHost() => ConnectHyperVHostAsync();
+
+    private bool CanConnectToHyperVHost() => !IsLoadingVms && !string.IsNullOrWhiteSpace(HyperVHost);
+
+    // ── Hyper-V phase 2: change host, connect VM, host management ────────────
+
+    [RelayCommand]
+    private void ChangeHyperVHost()
+    {
+        IsVmHostConnected = false;
+        Vms.Clear();
+        _vmHost = null;
+        ErrorMessage = null;
+    }
+
     [RelayCommand]
     private Task RefreshVms() => RefreshVmsAsync();
 
-    [RelayCommand(CanExecute = nameof(CanConnectNew))]
-    private Task ConnectNew() => IsHyperVMode
-        ? ConnectVmAsync(ResolveVmId()!.Value, HyperVHost)
-        : ConnectToAsync(NewHost.Trim(), NewUsername.Trim().NullIfEmpty(), NewPassword.NullIfEmpty());
+    [RelayCommand(CanExecute = nameof(CanConnectVm))]
+    private Task ConnectVm(VmViewModel vm) => ConnectVmAsync(vm);
 
-    private bool CanConnectNew()
+    private bool CanConnectVm(VmViewModel? vm) => vm?.CanConnect == true && !IsConnecting;
+
+    [RelayCommand]
+    private void ConnectToHostDirectly()
     {
-        if (IsConnecting) return false;
-        if (!IsHyperVMode) return !string.IsNullOrWhiteSpace(NewHost);
-
-        if (SelectedVm is { IsManualEntry: false, CanConnect: true }) return true;
-        if (SelectedVm?.IsManualEntry == true) return Guid.TryParse(VmId.Trim(), out _);
-        return false;
+        // Management session support is coming — host tools will live here.
+        ErrorMessage = "Management sessions are not yet available. Select a VM to connect.";
     }
 
-    private Guid? ResolveVmId()
-    {
-        if (SelectedVm is { IsManualEntry: false, Id: { } id }) return id;
-        if (Guid.TryParse(VmId.Trim(), out var parsed)) return parsed;
-        return null;
-    }
+    // ── Internal ──────────────────────────────────────────────────────────────
 
-    private async Task RefreshVmsAsync()
+    private async Task ConnectHyperVHostAsync()
     {
         IsLoadingVms = true;
         ErrorMessage = null;
         try
         {
-            var vms = await HyperVService.ListVmsAsync(HyperVHost);
-            HyperVVms.Clear();
+            _vmHost = new HyperVHost(HyperVHost.Trim(), HyperVUsername.NullIfEmpty(), HyperVPassword.NullIfEmpty());
+            var vms = await _vmHost.ListVmsAsync();
+            Vms.Clear();
             foreach (var vm in vms)
-                HyperVVms.Add(new HyperVVmViewModel(vm));
-            HyperVVms.Add(HyperVVmViewModel.ManualEntry);
-
-            SelectedVm = HyperVVms.FirstOrDefault(v => v.CanConnect)
-                         ?? HyperVVmViewModel.ManualEntry;
+                Vms.Add(new VmViewModel(vm));
+            IsVmHostConnected = true;
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Could not list VMs: {ex.Message}";
-            HyperVVms.Clear();
-            HyperVVms.Add(HyperVVmViewModel.ManualEntry);
-            SelectedVm = HyperVVmViewModel.ManualEntry;
+            ErrorMessage = $"Could not connect to Hyper-V host: {ex.Message}";
+            _vmHost = null;
         }
         finally
         {
@@ -278,7 +272,29 @@ public partial class ConnectionPanelViewModel : ViewModelBase
         }
     }
 
-    private async Task ConnectVmAsync(Guid vmId, string host)
+    private async Task RefreshVmsAsync()
+    {
+        if (_vmHost == null) return;
+        IsLoadingVms = true;
+        ErrorMessage = null;
+        try
+        {
+            var vms = await _vmHost.ListVmsAsync();
+            Vms.Clear();
+            foreach (var vm in vms)
+                Vms.Add(new VmViewModel(vm));
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Could not refresh VM list: {ex.Message}";
+        }
+        finally
+        {
+            IsLoadingVms = false;
+        }
+    }
+
+    private async Task ConnectVmAsync(VmViewModel vm)
     {
         IsConnecting = true;
         ErrorMessage = null;
@@ -286,18 +302,17 @@ public partial class ConnectionPanelViewModel : ViewModelBase
         {
             var client = new FreeRdpClient(_loggerFactory.CreateLogger<FreeRdpClient>());
             var options = new ConnectOptions(
-                Host: host,
+                Host: HyperVHost.Trim(),
                 Username: HyperVUsername.NullIfEmpty(),
                 Password: HyperVPassword.NullIfEmpty(),
-                VmId: vmId,
+                VmId: vm.Id,
                 Transport: TransportKind.HvSocket,
                 AcceptAnyCertificate: true);
 
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             await client.ConnectAsync(options, cts.Token);
 
-            var displayName = SelectedVm is { IsManualEntry: false } vm ? vm.Name : vmId.ToString();
-            var session = new SessionViewModel(client, displayName, _loggerFactory);
+            var session = new SessionViewModel(client, vm.Name, _loggerFactory);
             _main.AddSession(new SessionTabViewModel(session));
             session.StartLiveView();
         }
@@ -351,7 +366,6 @@ public partial class ConnectionPanelViewModel : ViewModelBase
 
     private async Task<int> SaveProfileAsync(string host, string? username, string? password)
     {
-        // Update an existing profile when in edit mode
         if (_editingProfileId.HasValue)
         {
             var existing = await _db!.Profiles.GetByIdAsync(_editingProfileId.Value);
@@ -370,7 +384,6 @@ public partial class ConnectionPanelViewModel : ViewModelBase
             }
         }
 
-        // Find-or-insert
         var match = await _db!.Profiles.FindAsync(host, username);
         if (match != null)
         {

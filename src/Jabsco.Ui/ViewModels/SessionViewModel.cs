@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -25,6 +27,22 @@ public enum SidePanelTab { Chat, History, Settings }
 
 public sealed record LogItem(string Icon, string Text);
 
+public sealed class ContextScreenshotViewModel : IDisposable
+{
+    public Bitmap? Image { get; }
+
+    public ContextScreenshotViewModel(byte[]? png)
+    {
+        if (png is { Length: > 0 })
+        {
+            using var ms = new MemoryStream(png);
+            Image = new Bitmap(ms);
+        }
+    }
+
+    public void Dispose() => Image?.Dispose();
+}
+
 public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
 {
     private readonly FreeRdpClient _client;
@@ -37,11 +55,15 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
     private ChatItemViewModel? _pendingActionItem;
     private List<ConversationTurn> _conversationHistory = [];
 
-    // Per-run screenshot tracking
-    private int _currentRunScreenshots;
+    // How many screenshots are currently in the model's context window.
+    // Updated on every ScreenshotEvent based on strategy + conversation history.
+    private int _screenshotsInContext;
 
     // Set by MainWindowViewModel.AddSession so disconnect closes the tab
     internal Action? CloseTab { get; set; }
+
+    // Set by SessionView to show a confirmation dialog before disconnecting
+    internal Func<Task<bool>>? ConfirmDisconnect { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ControlModeLabel))]
@@ -71,6 +93,19 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
     private ToolPolicy? _selectedPolicy;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ModelStrategyDescription))]
+    private ModelStrategy _selectedModelStrategy = ModelStrategy.LatestOnly;
+
+    public IReadOnlyList<ModelStrategy> AvailableModelStrategies { get; } =
+        [ModelStrategy.LatestOnly, ModelStrategy.CacheAware];
+
+    public string ModelStrategyDescription => SelectedModelStrategy switch
+    {
+        ModelStrategy.CacheAware => "Keeps last 3 screenshots and adds cache_control breakpoints to reduce token costs on long runs.",
+        _ => "Sends only the current screenshot each turn. Simple and predictable."
+    };
+
+    [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(SendPromptCommand))]
     [NotifyPropertyChangedFor(nameof(CanInteract))]
     private bool _isAgentRunning;
@@ -90,6 +125,20 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
     [ObservableProperty] private string _screenshotTokenText = "—";
     [ObservableProperty] private string _cachedTokenText = "—";
     [ObservableProperty] private string _systemTokenText = "—";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ScreenshotsChevron))]
+    private bool _isScreenshotsExpanded;
+
+    public string ScreenshotsChevron => IsScreenshotsExpanded ? "▾" : "▸";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsZoomed))]
+    private Bitmap? _zoomedImage;
+
+    public bool IsZoomed => ZoomedImage != null;
+
+    public ObservableCollection<ContextScreenshotViewModel> ContextScreenshots { get; } = [];
 
     public string Host { get; }
     public ObservableCollection<ChatItemViewModel> ChatItems { get; } = [];
@@ -123,6 +172,16 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
         _db = db;
         _profileId = profileId;
         Host = host;
+
+        // Pre-populate strategy from config if set; user can change it in the settings pane.
+        try
+        {
+            var cfg = ConfigLoader.Load();
+            if (cfg.Agent.ModelStrategy.HasValue)
+                SelectedModelStrategy = cfg.Agent.ModelStrategy.Value;
+        }
+        catch { /* malformed config — leave default */ }
+
         if (_db != null) _ = LoadPoliciesAsync();
     }
 
@@ -194,6 +253,15 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
     private void TogglePanel() => IsPanelVisible = !IsPanelVisible;
 
     [RelayCommand]
+    private void ToggleScreenshotsExpanded() => IsScreenshotsExpanded = !IsScreenshotsExpanded;
+
+    [RelayCommand]
+    private void ZoomIn(ContextScreenshotViewModel item) => ZoomedImage = item.Image;
+
+    [RelayCommand]
+    private void DismissZoom() => ZoomedImage = null;
+
+    [RelayCommand]
     private void ShowChat()
     {
         ActivePanelTab = SidePanelTab.Chat;
@@ -235,9 +303,7 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
         PromptText = "";
         IsAgentRunning = true;
 
-        // Reset per-run screenshot stats
-        _currentRunScreenshots = 0;
-        ScreenshotCountText = "0";
+        ScreenshotCountText = "—";
         ScreenshotTokenText = "—";
 
         AddChat(ChatItemKind.UserPrompt, prompt);
@@ -251,20 +317,20 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
 
-        var apiKey = config.AnthropicApiKey ?? Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
-        if (string.IsNullOrEmpty(apiKey))
-        {
-            AddChat(ChatItemKind.Error, "ANTHROPIC_API_KEY not set in config.toml or environment.");
-            IsAgentRunning = false;
-            return;
-        }
-
         _agentCts = new CancellationTokenSource();
         var ct = _agentCts.Token;
 
         try
         {
-            using var provider = new ClaudeProvider(new ClaudeOptions(apiKey, SystemPrompt: config.Agent.SystemPrompt));
+            IComputerUseProvider provider;
+            try { provider = ProviderFactory.Create(config); }
+            catch (InvalidOperationException ex)
+            {
+                AddChat(ChatItemKind.Error, ex.Message);
+                IsAgentRunning = false;
+                return;
+            }
+            using var _disposeProvider = provider as IDisposable;
             SystemTokenText = $"≈ {Compact(provider.BuildSystemPrompt().Length / 4)}";
 
             var loop = new AgentLoop(_client, provider, new UiApprovalSink(ChatItems), _conversationHistory, new PolicyMatcher());
@@ -273,7 +339,8 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
                 MaxSteps: ac.MaxSteps ?? 50,
                 PostActionDelay: TimeSpan.FromMilliseconds(ac.PostActionDelayMs ?? 800),
                 TimeBudget: ac.TimeBudgetSeconds.HasValue ? TimeSpan.FromSeconds(ac.TimeBudgetSeconds.Value) : null,
-                ToolPolicy: ac.ToolPolicy);
+                ToolPolicy: ac.ToolPolicy,
+                ModelStrategy: SelectedModelStrategy);
 
             string resolvedPrompt;
             try
@@ -353,9 +420,14 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
         {
             case ScreenshotEvent s:
                 CurrentFrame = s.PngBytes;
-                _currentRunScreenshots++;
-                ScreenshotCountText = _currentRunScreenshots.ToString();
-                ScreenshotTokenText = $"≈ {Compact(_currentRunScreenshots * EstimateImageTokens(s.PngBytes))}";
+                _screenshotsInContext = SelectedModelStrategy == ModelStrategy.CacheAware
+                    ? Math.Min(
+                        _conversationHistory.Count(r => r.LastScreenshotPng != null) + 1,
+                        ClaudeProvider.CacheAwareScreenshotWindow)
+                    : 1;
+                ScreenshotCountText = _screenshotsInContext.ToString();
+                ScreenshotTokenText = $"≈ {Compact(_screenshotsInContext * EstimateImageTokens(s.PngBytes))}";
+                RebuildContextScreenshots(s.PngBytes);
                 break;
 
             case ThinkingEvent t:
@@ -440,6 +512,24 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
                 HistoryItems.Add(new LogItem("!", $"Error: {e.Message}"));
                 break;
         }
+    }
+
+    private void RebuildContextScreenshots(byte[] currentPng)
+    {
+        ZoomedImage = null; // clear before disposing bitmaps
+        foreach (var item in ContextScreenshots) item.Dispose();
+        ContextScreenshots.Clear();
+
+        if (SelectedModelStrategy == ModelStrategy.CacheAware)
+        {
+            foreach (var turn in _conversationHistory
+                .Where(t => t.LastScreenshotPng != null)
+                .TakeLast(ClaudeProvider.CacheAwareScreenshotWindow - 1))
+            {
+                ContextScreenshots.Add(new ContextScreenshotViewModel(turn.LastScreenshotPng));
+            }
+        }
+        ContextScreenshots.Add(new ContextScreenshotViewModel(currentPng));
     }
 
     private void AddChat(ChatItemKind kind, string text)
@@ -542,6 +632,9 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
     [RelayCommand]
     private async Task DisconnectAsync()
     {
+        if (ConfirmDisconnect != null && !await ConfirmDisconnect())
+            return;
+
         _agentCts?.Cancel();
         _viewCts?.Cancel();
         if (_viewTask != null)

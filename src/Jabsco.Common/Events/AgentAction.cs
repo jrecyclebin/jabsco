@@ -10,6 +10,7 @@ public sealed record KeyAction(string Keys) : AgentAction;
 public sealed record TypeAction(string Text) : AgentAction;
 public sealed record DoneAction(string Response) : AgentAction;
 public sealed record LoadSkillAction(string SkillName) : AgentAction;
+public sealed record WaitAction(int Seconds) : AgentAction;
 
 public enum MouseButton { Left, Right, Middle }
 public enum ScrollDirection { Up, Down, Left, Right }

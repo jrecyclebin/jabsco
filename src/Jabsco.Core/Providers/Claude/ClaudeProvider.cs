@@ -1,8 +1,8 @@
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jabsco.Common.Events;
+using Jabsco.Core.Config;
 using Jabsco.Core.Skills;
 
 namespace Jabsco.Core.Providers.Claude;
@@ -37,25 +37,103 @@ public sealed class ClaudeProvider : IComputerUseProvider, IDisposable
         return ParseResponse(json);
     }
 
+    // Number of screenshots kept in context in cache-aware mode (current + history).
+    public const int CacheAwareScreenshotWindow = 3;
+
     private string BuildRequest(ProviderRequest request)
     {
         var messages = new JsonArray();
 
-        // Replay complete past rounds — no screenshots, just text and tool exchanges
-        foreach (var round in request.History)
+        BuildMessages(request, messages, request.Options.Strategy);
+
+        var tools = BuildTools(request.Options.Strategy);
+
+        var requestObj = new JsonObject
         {
-            messages.Add(UserMessageText(round.UserPrompt));
-            foreach (var turn in round.Turns)
-            {
-                var id = turn.ToolUseId ?? $"tool_{messages.Count}";
-                messages.Add(AssistantToolUse(id, turn.Action));
-                messages.Add(UserToolResult(id, turn.Result, png: null));
+            ["model"] = _opts.Model,
+            ["max_tokens"] = request.Options.MaxTokens,
+            ["system"] = BuildSystemPrompt(),
+            ["tools"] = tools,
+            ["messages"] = messages
+        };
+
+        // Suggested effort levels from the Claude docs:
+        // https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#combining-with-extended-thinking
+        var effort = "off";
+        if (_opts.Model.Contains("opus-4-7")) {
+            switch (_opts.Thinking) {
+                case ThinkingMode.Low:
+                    effort = "low";
+                break;
+                case ThinkingMode.High:
+                    effort = "high";
+                break;
             }
-            // Null = interrupted round; synthetic assistant message keeps user/assistant alternation valid
-            messages.Add(AssistantTextMessage(round.FinalResponse ?? "[Interrupted]"));
+        } else {
+            switch (_opts.Thinking) {
+                case ThinkingMode.Off:
+                    effort = "low";
+                break;
+                case ThinkingMode.Low:
+                    effort = "medium";
+                break;
+                case ThinkingMode.High:
+                    effort = "high";
+                break;
+            }
+        }
+        
+        if (effort != "off")
+        {
+            requestObj["thinking"] = new JsonObject
+            {
+                ["type"] = "adaptive"
+            };
+            requestObj["output_config"] = new JsonObject
+            {
+                ["effort"] = effort
+            };
         }
 
-        // Current prompt: screenshot goes with it on the first step, or on the last tool result otherwise
+        return requestObj.ToJsonString();
+    }
+
+    //
+    // Screenshots are attached to the last tool result in each round of model
+    // work. We then attach cache_control messages to the last three screenshots
+    // that aren't currently underway. (We wait for the current round to be finished
+    // before caching it.)
+    //
+    private void BuildMessages(ProviderRequest request, JsonArray messages, ModelStrategy strategy)
+    {
+        var cacheSlotsLeft = CacheAwareScreenshotWindow;
+        for (int i = request.History.Count - 1; i >= 0; i--)
+        {
+            var round = request.History[i];
+            messages.Insert(0, AssistantTextMessage(round.FinalResponse ?? "[Interrupted]"));
+            for (int j = round.Turns.Count - 1; j >= 0; j--)
+            {
+                var turn = round.Turns[j];
+                var id = turn.ToolUseId;
+                bool includeScreenshot = false;
+                if (strategy == ModelStrategy.CacheAware)
+                {
+                    bool isLastTurn = j == round.Turns.Count - 1;
+                    includeScreenshot = isLastTurn && round.LastScreenshotPng != null;
+                    if (includeScreenshot && cacheSlotsLeft > 0)
+                        cacheSlotsLeft--;
+                    else
+                        includeScreenshot = false; // don't include screenshot if we've exhausted cache slots
+                }
+
+                messages.Insert(0, UserToolResult(id, turn.Result,
+                    includeScreenshot ? round.LastScreenshotPng : null,
+                    includeScreenshot));
+                messages.Insert(0, AssistantToolUse(id, turn.Action));
+            }
+            messages.Insert(0, UserMessageText(round.UserPrompt));
+        }
+
         if (request.CurrentTurns.Count == 0)
         {
             messages.Add(UserMessage(request.UserPrompt, request.ScreenshotPng));
@@ -66,65 +144,51 @@ public sealed class ClaudeProvider : IComputerUseProvider, IDisposable
             for (int i = 0; i < request.CurrentTurns.Count; i++)
             {
                 var turn = request.CurrentTurns[i];
-                var id = turn.ToolUseId ?? $"tool_{i}";
+                var id = turn.ToolUseId;
                 bool isLast = i == request.CurrentTurns.Count - 1;
                 messages.Add(AssistantToolUse(id, turn.Action));
-                messages.Add(UserToolResult(id, turn.Result, isLast ? request.ScreenshotPng : null));
+                messages.Add(UserToolResult(id, turn.Result,
+                    isLast ? request.ScreenshotPng : null,
+                    false));
             }
         }
+    }
 
-        var system = BuildSystemPrompt();
-        var tools = new JsonArray
+    private JsonArray BuildTools(ModelStrategy strategy)
+    {
+        var computerTool = new JsonObject
         {
-            new JsonObject
+            ["type"] = ToolTypeFor(_opts.Model),
+            ["name"] = "computer",
+            ["display_width_px"] = _opts.DisplayWidth,
+            ["display_height_px"] = _opts.DisplayHeight
+        };
+        var loadSkillTool = new JsonObject
+        {
+            ["name"] = "load_skill",
+            ["description"] = "Load a skill's full instructions by its internal name.",
+            ["input_schema"] = new JsonObject
             {
-                ["type"] = ToolTypeFor(_opts.Model),
-                ["name"] = "computer",
-                ["display_width_px"] = _opts.DisplayWidth,
-                ["display_height_px"] = _opts.DisplayHeight
-            },
-            new JsonObject
-            {
-                ["name"] = "load_skill",
-                ["description"] = "Load a skill's full instructions by its internal name.",
-                ["input_schema"] = new JsonObject
+                ["type"] = "object",
+                ["properties"] = new JsonObject
                 {
-                    ["type"] = "object",
-                    ["properties"] = new JsonObject
-                    {
-                        ["name"] = new JsonObject { ["type"] = "string" }
-                    },
-                    ["required"] = new JsonArray { "name" }
-                }
+                    ["name"] = new JsonObject { ["type"] = "string" }
+                },
+                ["required"] = new JsonArray { "name" }
             }
         };
 
-        var requestObj = new JsonObject
-        {
-            ["model"] = _opts.Model,
-            ["max_tokens"] = request.Options.MaxTokens,
-            ["system"] = system,
-            ["tools"] = tools,
-            ["messages"] = messages
-        };
+        if (strategy == ModelStrategy.CacheAware)
+            loadSkillTool["cache_control"] = new JsonObject { ["type"] = "ephemeral" };
 
-        if (_opts.ExtendedThinking)
-        {
-            requestObj["thinking"] = new JsonObject
-            {
-                ["type"] = "enabled",
-                ["budget_tokens"] = 1024
-            };
-        }
-
-        return requestObj.ToJsonString();
+        return new JsonArray { computerTool, loadSkillTool };
     }
 
     public string BuildSystemPrompt()
     {
         var sb = new StringBuilder();
         var staticPart = _opts.SystemPrompt
-            ?? "Your cursor position is shown in each screenshot as a red arrow. Use it to orient yourself on the screen.";
+            ?? "You have been given access to a user account on a machine over RDP. Screenshots will be supplied to you after every tool call and user prompt - there's no need to request additional screenshots. You can simply use the `wait` tool to request an additional screenshot after a period of time.\n\nYour cursor position is shown in each screenshot as a red arrow. Use it to orient yourself on the screen.";
         sb.AppendLine(staticPart);
 
         var skills = SkillLoader.List();
@@ -213,6 +277,7 @@ public sealed class ClaudeProvider : IComputerUseProvider, IDisposable
             "scroll" => new ScrollAction(GetX(input), GetY(input), ParseDirection(input), GetAmount(input)),
             "key" => new KeyAction(input.GetProperty("text").GetString() ?? string.Empty),
             "type" => new TypeAction(input.GetProperty("text").GetString() ?? string.Empty),
+            "wait" => new WaitAction(input.TryGetProperty("duration", out var d) ? d.GetInt32() : 1),
             _ => new ScreenshotAction()
         };
     }
@@ -265,10 +330,16 @@ public sealed class ClaudeProvider : IComputerUseProvider, IDisposable
         };
     }
 
-    private static JsonObject UserToolResult(string id, string result, byte[]? png)
+    private static JsonObject UserToolResult(string id, string result, byte[]? png, bool cacheBreakpoint = false)
     {
         var content = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = result } };
-        if (png != null) content.Add(ImageContent(png));
+        if (png != null)
+        {
+            var img = ImageContent(png);
+            if (cacheBreakpoint)
+                img["cache_control"] = new JsonObject { ["type"] = "ephemeral" };
+            content.Add(img);
+        }
         return new JsonObject
         {
             ["role"] = "user",
@@ -324,6 +395,7 @@ public sealed class ClaudeProvider : IComputerUseProvider, IDisposable
         ScrollAction s => $$"""{"action":"scroll","coordinate":[{{s.X}},{{s.Y}}],"direction":"{{s.Direction.ToString().ToLower()}}","amount":{{s.Amount}}}""",
         KeyAction k => $$"""{"action":"key","text":"{{k.Keys}}"}""",
         TypeAction t => $$"""{"action":"type","text":{{JsonSerializer.Serialize(t.Text)}}}""",
+        WaitAction w => $$"""{"action":"wait","duration":{{w.Seconds}}}""",
         DoneAction => """{"action":"screenshot"}""",
         _ => """{"action":"screenshot"}"""
     };

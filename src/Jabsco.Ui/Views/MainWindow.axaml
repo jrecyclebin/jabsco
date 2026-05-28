@@ -47,7 +47,7 @@
                                             <TextBlock Text="{Binding Title}" VerticalAlignment="Center"/>
                                         </Button>
                                         <Button Classes="tabClose"
-                                                Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).CloseTabCommand}"
+                                                Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).RequestCloseTabCommand}"
                                                 CommandParameter="{Binding}"
                                                 Padding="4,6"
                                                 Content="✕"/>
