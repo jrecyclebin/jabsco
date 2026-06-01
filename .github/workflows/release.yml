@@ -34,7 +34,7 @@ jobs:
           - name: windows-x64
             runner: windows-latest
             task: publish:win
-            out_dir: publish/windows-x64/ui
+            out_dir: publish/windows-x64/app
             archive: Jabsco-${{ github.event.release.tag_name }}-windows-x64.zip
             kind: zip
 
