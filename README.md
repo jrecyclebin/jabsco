@@ -81,6 +81,14 @@ VMs. The connection to the host isn't an RDP connection - it's a dashboard of
 VMs that the agent can access. (This connection is only support on Windows,
 where there is access to Powershell remoting.)
 
+This work is feature flagged - so you'll need to add an entry to your
+config.toml:
+
+```toml
+[feature]
+hyperv = true
+```
+
 The connections to the VMs themseves are RDP connections - using Hyper-V's
 VMConnect functionality. On Linux and Mac, you'll need to drop the VM's ID in
 there on the Hyper-V connection tab.
