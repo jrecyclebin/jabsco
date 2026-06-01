@@ -29,15 +29,16 @@ public sealed class ProfileRepository
     {
         await using var db = new SqliteConnection(_connectionString);
         var id = await db.ExecuteScalarAsync<int>("""
-            INSERT INTO profiles (name, host, port, username, credential_ref, transport, resolution,
+            INSERT INTO profiles (name, host, port, vm_id, username, credential_ref, transport, resolution,
                 last_model, tool_policy_id, created_at, last_used_at, use_count)
-            VALUES (@Name, @Host, @Port, @Username, @CredentialRef, @Transport, @Resolution,
+            VALUES (@Name, @Host, @Port, @VmId, @Username, @CredentialRef, @Transport, @Resolution,
                 @LastModel, @ToolPolicyId, @CreatedAt, @LastUsedAt, @UseCount);
             SELECT last_insert_rowid();
             """,
             new
             {
-                profile.Name, profile.Host, profile.Port, profile.Username,
+                profile.Name, profile.Host, profile.Port,
+                VmId = profile.VmId?.ToString("D"), profile.Username,
                 profile.CredentialRef, profile.Transport, profile.Resolution,
                 profile.LastModel, profile.ToolPolicyId,
                 CreatedAt = profile.CreatedAt.ToString("O"),
@@ -52,7 +53,8 @@ public sealed class ProfileRepository
         await using var db = new SqliteConnection(_connectionString);
         await db.ExecuteAsync("""
             UPDATE profiles SET
-                name = @Name, host = @Host, port = @Port, username = @Username,
+                name = @Name, host = @Host, port = @Port, 
+                vm_id = @VmId, username = @Username,
                 credential_ref = @CredentialRef, transport = @Transport,
                 resolution = @Resolution, last_model = @LastModel,
                 tool_policy_id = @ToolPolicyId, last_used_at = @LastUsedAt,
@@ -61,7 +63,8 @@ public sealed class ProfileRepository
             """,
             new
             {
-                profile.Name, profile.Host, profile.Port, profile.Username,
+                profile.Name, profile.Host, profile.Port,
+                VmId = profile.VmId?.ToString("D"), profile.Username,
                 profile.CredentialRef, profile.Transport, profile.Resolution,
                 profile.LastModel, profile.ToolPolicyId,
                 LastUsedAt = profile.LastUsedAt.ToString("O"),
@@ -79,13 +82,16 @@ public sealed class ProfileRepository
         await tx.CommitAsync(ct);
     }
 
-    public async Task<Profile?> FindAsync(string host, string? username, CancellationToken ct = default)
+    public async Task<Profile?> FindAsync(string host, int port, string? username, Guid? vmGuid, CancellationToken ct = default)
     {
         await using var db = new SqliteConnection(_connectionString);
-        var sql = username is null
-            ? "SELECT * FROM profiles WHERE host = @host ORDER BY last_used_at DESC LIMIT 1"
-            : "SELECT * FROM profiles WHERE host = @host AND username = @username ORDER BY last_used_at DESC LIMIT 1";
-        var row = await db.QuerySingleOrDefaultAsync<ProfileRow>(sql, new { host, username });
+        string? vmId = vmGuid?.ToString("D");
+        var sql =
+            "SELECT * FROM profiles WHERE host = @host AND port = @port " +
+            (username is null ? "" : "AND username = @username ") +
+            (vmId is null     ? "" : "AND vm_id = @vmId ") +
+            "ORDER BY last_used_at DESC LIMIT 1";
+        var row = await db.QuerySingleOrDefaultAsync<ProfileRow>(sql, new { host, port, username, vmId });
         return row is null ? null : ProfileRow.ToProfile(row);
     }
 
@@ -104,6 +110,7 @@ public sealed class ProfileRepository
         public string? name { get; set; }
         public string host { get; set; } = string.Empty;
         public int port { get; set; }
+        public string? vm_id { get; set; }
         public string? username { get; set; }
         public string? credential_ref { get; set; }
         public string transport { get; set; } = "tcp";
@@ -119,6 +126,7 @@ public sealed class ProfileRepository
             Name: r.name,
             Host: r.host,
             Port: r.port,
+            VmId: r.vm_id is null ? null : Guid.Parse(r.vm_id),
             Username: r.username,
             CredentialRef: r.credential_ref,
             Transport: r.transport,

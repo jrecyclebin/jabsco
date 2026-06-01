@@ -23,6 +23,7 @@ internal static class MigrationRunner
           name            TEXT,
           host            TEXT NOT NULL,
           port            INTEGER NOT NULL DEFAULT 3389,
+          vm_id           TEXT,
           username        TEXT,
           credential_ref  TEXT,
           transport       TEXT NOT NULL DEFAULT 'tcp',

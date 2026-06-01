@@ -5,6 +5,7 @@ public sealed record Profile(
     string? Name,
     string Host,
     int Port,
+    Guid? VmId,
     string? Username,
     string? CredentialRef,
     string Transport,

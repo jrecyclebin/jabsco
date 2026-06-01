@@ -7,4 +7,4 @@ public sealed record AgentOptions(
     TimeSpan? TimeBudget = null,
     string? ToolPolicy = null,
     TimeSpan PostActionDelay = default,
-    ModelStrategy ModelStrategy = ModelStrategy.LatestOnly);
+    ModelStrategy ModelStrategy = ModelStrategy.CacheAware);

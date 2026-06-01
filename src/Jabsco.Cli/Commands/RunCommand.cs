@@ -69,7 +69,7 @@ public static class RunCommand
             try
             {
                 var db = await JabscoDb.OpenAsync(ct: ct);
-                var profile = await db.Profiles.FindAsync(host, username, ct);
+                var profile = await db.Profiles.FindAsync(host, 3389, username, null, ct);
                 if (profile != null)
                 {
                     username ??= profile.Username;
@@ -127,7 +127,7 @@ public static class RunCommand
             try { provider = ProviderFactory.Create(config, modelArg); }
             catch (InvalidOperationException ex) { Console.Error.WriteLine(ex.Message); return; }
             using var _ = provider as IDisposable;
-            var loop = new AgentLoop(rdp, provider, approval);
+            var loop = new AgentLoop(new ScreenConnection(rdp), provider, approval);
             var opts = new AgentOptions(MaxSteps: maxSteps, PostActionDelay: TimeSpan.FromMilliseconds(800));
             var writer = new NdjsonEventWriter(Console.Out, quiet);
 

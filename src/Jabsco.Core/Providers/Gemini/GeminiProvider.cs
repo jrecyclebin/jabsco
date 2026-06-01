@@ -59,36 +59,26 @@ public sealed class GeminiProvider : IComputerUseProvider, IDisposable
 
     private void BuildContents(ProviderRequest request, JsonArray contents)
     {
-        foreach (var turn in request.History)
+        // AgentLoop has pruned screenshots to what the strategy keeps, so attach whatever
+        // survives on each round and turn. Gemini has no cache breakpoints to place.
+        for (int r = 0; r < request.History.Count; r++)
         {
-            contents.Add(UserMessage(turn.UserPrompt, null));
-            for (int i = 0; i < turn.Turns.Count; i++)
+            var round = request.History[r];
+            contents.Add(UserMessage(round.UserPrompt, round.PromptScreenshotPng));
+            foreach (var t in round.Turns)
             {
-                var t = turn.Turns[i];
-                bool isLast = i == turn.Turns.Count - 1;
                 contents.Add(ModelFunctionCall(t.ToolUseId, t.Action));
-                contents.Add(UserFunctionResponse(t.ToolUseId, t.Action, t.Result,
-                    isLast ? turn.LastScreenshotPng : null));
+                contents.Add(UserFunctionResponse(t.ToolUseId, t.Action, t.Result, t.ScreenshotPng));
             }
-            if (turn.FinalResponse is not null)
-                contents.Add(ModelTextMessage(turn.FinalResponse));
+            if (round.FinalResponse is not null)
+                contents.Add(ModelTextMessage(round.FinalResponse));
         }
 
-        if (request.CurrentTurns.Count == 0)
+        contents.Add(UserMessage(request.UserPrompt, request.PromptScreenshotPng));
+        foreach (var t in request.CurrentTurns)
         {
-            contents.Add(UserMessage(request.UserPrompt, request.ScreenshotPng));
-        }
-        else
-        {
-            contents.Add(UserMessage(request.UserPrompt, null));
-            for (int i = 0; i < request.CurrentTurns.Count; i++)
-            {
-                var t = request.CurrentTurns[i];
-                bool isLast = i == request.CurrentTurns.Count - 1;
-                contents.Add(ModelFunctionCall(t.ToolUseId, t.Action));
-                contents.Add(UserFunctionResponse(t.ToolUseId, t.Action, t.Result,
-                    isLast ? request.ScreenshotPng : null));
-            }
+            contents.Add(ModelFunctionCall(t.ToolUseId, t.Action));
+            contents.Add(UserFunctionResponse(t.ToolUseId, t.Action, t.Result, t.ScreenshotPng));
         }
     }
 
@@ -123,7 +113,11 @@ public sealed class GeminiProvider : IComputerUseProvider, IDisposable
             {
                 var name = fc.TryGetProperty("name", out var n) ? n.GetString() : null;
                 var args = fc.GetProperty("args");
-                toolUseId = fc.TryGetProperty("id", out var id) ? id.GetString() : Guid.NewGuid().ToString("N");
+                var rawId = fc.TryGetProperty("id", out var id) ? id.GetString() : Guid.NewGuid().ToString("N");
+                // thought_signature lives on the part (not inside functionCall) when thinking is enabled;
+                // encode it into ToolUseId so ModelFunctionCall can echo it back without touching shared types.
+                var sig = part.TryGetProperty("thought_signature", out var ts) ? ts.GetString() : null;
+                toolUseId = sig != null ? $"{rawId}\x1F{sig}" : rawId;
                 action = ParseGeminiAction(name, args);
             }
             else if (part.TryGetProperty("text", out var text))
@@ -180,17 +174,15 @@ public sealed class GeminiProvider : IComputerUseProvider, IDisposable
     private JsonObject ModelFunctionCall(string id, AgentAction action)
     {
         var (name, argsObj) = ActionToGemini(action);
-        return new JsonObject
-        {
-            ["role"] = "model",
-            ["parts"] = new JsonArray
-            {
-                new JsonObject
-                {
-                    ["functionCall"] = new JsonObject { ["id"] = id, ["name"] = name, ["args"] = argsObj }
-                }
-            }
-        };
+        var segments = id.Split('\x1F', 2);
+        var actualId = segments[0];
+        var sig = segments.Length > 1 ? segments[1] : null;
+
+        var fc = new JsonObject { ["id"] = actualId, ["name"] = name, ["args"] = argsObj };
+        var part = new JsonObject { ["functionCall"] = fc };
+        if (sig != null) part["thought_signature"] = sig;
+
+        return new JsonObject { ["role"] = "model", ["parts"] = new JsonArray { part } };
     }
 
     private JsonObject UserFunctionResponse(string id, AgentAction action, string result, byte[]? screenshot)

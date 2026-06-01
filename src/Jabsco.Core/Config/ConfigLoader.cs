@@ -39,8 +39,10 @@ public static class ConfigLoader
         # Tool approval policy: "allow" auto-approves all tool calls, "deny" blocks them.
         # tool_policy = "allow"
         #
-        # Screenshot strategy: "latest_only" (default) sends only the current screenshot each turn.
-        # "cache_aware" keeps the last 3 screenshots and adds cache_control breakpoints for prompt caching.
+        # Screenshot strategy. "cache_aware" (default) sends a screenshot after every turn,
+        # pruning to the latest 3 every 25 turns, with cache_control breakpoints.
+        # "model_managed" only sends one after each prompt and each screenshot action.
+        # "latest_only" sends only the current screenshot each turn.
         # model_strategy = "cache_aware"
         #
         # Extended thinking effort: "low" (default), "high" (best accuracy), or "off".
@@ -78,6 +80,7 @@ public static class ConfigLoader
         {
             "cache_aware" or "cacheaware" => ModelStrategy.CacheAware,
             "latest_only" or "latestonly" => ModelStrategy.LatestOnly,
+            "model_managed" or "modelmanaged" => ModelStrategy.ModelManaged,
             _ => null
         };
 

@@ -112,6 +112,39 @@
                 </Animation>
             </Style.Animations>
         </Style>
+
+        <!-- Per-VM action buttons: compact pills in the host VM list -->
+        <Style Selector="Button.vmaction">
+            <Setter Property="Background" Value="#22344A"/>
+            <Setter Property="BorderBrush" Value="#3A5570"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground" Value="#CFE2F2"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="12,5"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="Button.vmaction:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#2E4863"/>
+        </Style>
+        <Style Selector="Button.vmaction.connect">
+            <Setter Property="Background" Value="#0078D4"/>
+            <Setter Property="BorderBrush" Value="#0078D4"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+        <Style Selector="Button.vmaction.connect:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#006CBD"/>
+        </Style>
+        <!-- Stop button while a graceful shutdown is underway: forced power-off escape hatch -->
+        <Style Selector="Button.vmaction.forcing">
+            <Setter Property="Background" Value="#A82939"/>
+            <Setter Property="BorderBrush" Value="#C23B4C"/>
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+        <Style Selector="Button.vmaction.forcing:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#922230"/>
+        </Style>
     </UserControl.Styles>
 
     <Grid RowDefinitions="*,Auto">
@@ -125,6 +158,77 @@
                                           Focusable="True"
                                           HorizontalAlignment="Stretch"
                                           VerticalAlignment="Stretch"/>
+
+            <!-- Host view: no screen, so show the VM list as the main area -->
+            <Border IsVisible="{Binding ShowVmList}"
+                    Background="#11202E"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch">
+                <Grid RowDefinitions="Auto,*" Margin="48" MaxWidth="640" HorizontalAlignment="Center">
+                    <StackPanel Grid.Row="0" Spacing="6" Margin="0,0,0,20">
+                        <TextBlock Text="HYPER-V HOST" Foreground="#7E93A8" FontSize="12" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding Host}" Foreground="#E6EEF6" FontSize="24" FontWeight="SemiBold"/>
+                        <TextBlock Text="Connect to a VM, start or stop it, or let the agent manage the host."
+                                   Foreground="#7E93A8" FontSize="13"/>
+                        <!-- Shown while the agent holds the host in Observe mode -->
+                        <StackPanel Orientation="Horizontal" Spacing="6"
+                                    IsVisible="{Binding CanInteract, Converter={x:Static BoolConverters.Not}}">
+                            <TextBlock Text="🔒" FontSize="12" VerticalAlignment="Center"/>
+                            <TextBlock Text="Locked while the agent is working."
+                                       Foreground="#E0B050" FontSize="12" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </StackPanel>
+                    <Border Grid.Row="1" Background="#18293A" BorderBrush="#273B4F" BorderThickness="1" CornerRadius="8">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding Vms}" IsEnabled="{Binding CanInteract}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:VmViewModel">
+                                        <Border BorderBrush="#273B4F" BorderThickness="0,0,0,1">
+                                            <Grid ColumnDefinitions="Auto,*,Auto"
+                                                  Margin="16,11"
+                                                  Background="Transparent">
+                                                <TextBlock Grid.Column="0"
+                                                           Text="{Binding StateGlyph}"
+                                                           Foreground="{Binding StateColor}"
+                                                           FontSize="13"
+                                                           Width="20"
+                                                           VerticalAlignment="Center"/>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                                                    <TextBlock Text="{Binding Name}"
+                                                               Foreground="#E6EEF6" FontSize="14"/>
+                                                    <TextBlock Text="{Binding StateLabel}"
+                                                               Foreground="#7E93A8" FontSize="11"/>
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
+                                                    <Button Classes="vmaction"
+                                                            Content="Start"
+                                                            IsVisible="{Binding CanStart}"
+                                                            IsEnabled="{Binding CanPressStart}"
+                                                            Command="{Binding $parent[UserControl].((vm:SessionViewModel)DataContext).StartVmCommand}"
+                                                            CommandParameter="{Binding}"/>
+                                                    <Button Classes="vmaction"
+                                                            Classes.forcing="{Binding IsStopForcing}"
+                                                            Content="{Binding StopLabel}"
+                                                            IsVisible="{Binding CanStop}"
+                                                            IsEnabled="{Binding CanPressStop}"
+                                                            Command="{Binding $parent[UserControl].((vm:SessionViewModel)DataContext).StopVmCommand}"
+                                                            CommandParameter="{Binding}"/>
+                                                    <Button Classes="vmaction connect"
+                                                            Content="Connect"
+                                                            IsVisible="{Binding CanConnect}"
+                                                            IsEnabled="{Binding CanPressConnect}"
+                                                            Command="{Binding $parent[UserControl].((vm:SessionViewModel)DataContext).SwitchToVmCommand}"
+                                                            CommandParameter="{Binding}"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+            </Border>
 
             <!-- Transparent overlay: cursor trails, click rings -->
             <controls:RdpOverlayControl x:Name="OverlayControl"

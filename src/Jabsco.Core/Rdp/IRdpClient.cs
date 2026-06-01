@@ -33,15 +33,17 @@ public sealed record ConnectOptions(
     Guid? VmId = null,
     bool AcceptAnyCertificate = false)
 {
-    public static ConnectOptions FromProfile(Profile p)
+    public static ConnectOptions FromProfile(Profile p, string? password = null)
     {
         var (width, height) = ParseResolution(p.Resolution);
         return new ConnectOptions(
             Host: p.Host,
             Port: p.Port,
             Username: p.Username,
+            Password: password,
             Width: width,
-            Height: height);
+            Height: height,
+            AcceptAnyCertificate: true);
     }
 
     private static (int width, int height) ParseResolution(string resolution)

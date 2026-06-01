@@ -28,7 +28,7 @@ public sealed class RdpSession : ISession
     {
         _rdp = rdp;
         _logger = logger;
-        _agentLoop = new AgentLoop(rdp, provider, approval);
+        _agentLoop = new AgentLoop(new ScreenConnection(rdp), provider, approval);
 
         // Expose the host from the RDP client's connection options via the StateChanged event
         // connection info — stored when ConnectAsync was called. We read it from the rdp instance.

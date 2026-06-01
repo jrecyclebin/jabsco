@@ -57,32 +57,24 @@ run = "scripts/build-win-native.sh"
 # ── Windows x64 ────────────────────────────────────────────────────────────────
 
 [tasks."publish:win"]
-description = "Publish all apps for Windows x64 → publish/win-x64/"
+description = "Publish all apps for Windows x64 → publish/windows-x64/"
 run = """
 #!/usr/bin/env bash
 set -e
 RID=win-x64
-OUT=publish/$RID
+OUT=publish/windows-x64
 
 # Build freerdp3.dll if not already present
 scripts/build-win-native.sh
 
 echo "→ Jabsco.Ui ($RID)"
 dotnet publish src/Jabsco.Ui -c Release -r $RID --self-contained \
-    -o $OUT/ui
-
-echo "→ Jabsco.Daemon ($RID)"
-dotnet publish src/Jabsco.Daemon -c Release -r $RID --self-contained \
-    -p:PublishSingleFile=true -o $OUT/daemon
-
-echo "→ Jabsco.PowerShell ($RID)"
-dotnet publish src/Jabsco.PowerShell -c Release -r $RID \
-    -o $OUT/powershell
+    -o $OUT/app
 
 # Copy native FreeRDP DLLs into Jabsco.exe output
 if ls native/win-x64/*.dll &>/dev/null; then
     echo "→ Copying native DLLs"
-    for dir in $OUT/ui $OUT/daemon; do
+    for dir in $OUT/app; do
         [[ -d "$dir" ]] && cp native/win-x64/*.dll "$dir/"
     done
 fi
@@ -102,15 +94,10 @@ OUT=publish/$RID
 
 echo "→ Jabsco.Ui ($RID)"
 dotnet publish src/Jabsco.Ui -c Release -r $RID --self-contained \
-    -o $OUT/ui
-
-echo "→ Jabsco.Daemon ($RID)"
-dotnet publish src/Jabsco.Daemon -c Release -r $RID --self-contained \
-    -p:PublishSingleFile=true -o $OUT/daemon
-
-echo "→ Jabsco.PowerShell ($RID)"
-dotnet publish src/Jabsco.PowerShell -c Release -r $RID \
-    -o $OUT/powershell
+    -p:PublishSingleFile=true \
+    -p:IncludeNativeLibrariesForSelfExtract=true \
+    -p:TrimMode=link \
+    -o $OUT/app
 
 echo "✓ Linux build → $OUT/"
 """
@@ -118,7 +105,7 @@ echo "✓ Linux build → $OUT/"
 # ── macOS universal ────────────────────────────────────────────────────────────
 
 [tasks."publish:mac"]
-description = "Publish all apps for macOS → publish/osx-arm64/ (pass --universal for arm64+x64 fat binaries)"
+description = "Publish all apps for macOS → publish/macos-arm64/ (pass --universal for arm64+x64 fat binaries)"
 run = """
 #!/usr/bin/env bash
 set -e
@@ -132,7 +119,7 @@ done
 
 publish_app() {
     local src=$1 name=$2 extra=${3:-}
-    local RID=osx-arm64 OUT=publish/osx-arm64
+    local RID=osx-arm64 OUT=publish/macos-arm64
     dotnet publish src/$src -c Release -r $RID --self-contained $extra \
         -o $OUT/$name -nologo -v q
 }
@@ -141,11 +128,11 @@ publish_universal_app() {
     local src=$1 name=$2 extra=${3:-}
     echo "→ $name (arm64 + x64)"
     dotnet publish src/$src -c Release -r osx-arm64 --self-contained $extra \
-        -o publish/osx-arm64/$name -nologo -v q
+        -o publish/macos-arm64/$name -nologo -v q
     dotnet publish src/$src -c Release -r osx-x64   --self-contained $extra \
-        -o publish/osx-x64/$name   -nologo -v q
+        -o publish/macos-x64/$name   -nologo -v q
 
-    local arm64=publish/osx-arm64/$name x64=publish/osx-x64/$name dest=publish/osx-universal/$name
+    local arm64=publish/macos-arm64/$name x64=publish/macos-x64/$name dest=publish/macos-universal/$name
     mkdir -p "$dest"
     cp -r "$arm64/." "$dest/"
     while IFS= read -r -d '' f; do
@@ -162,19 +149,13 @@ if $UNIVERSAL; then
         echo "error: lipo not found — --universal requires macOS" >&2
         exit 1
     fi
-    publish_universal_app Jabsco.Ui         ui
-    publish_universal_app Jabsco.Daemon     daemon      "-p:PublishSingleFile=true"
-    publish_universal_app Jabsco.PowerShell powershell
-    rm -rf publish/osx-arm64 publish/osx-x64
-    echo "✓ macOS universal build → publish/osx-universal/"
+    publish_universal_app Jabsco.Ui         app         "-p:PublishSingleFile=true"
+    rm -rf publish/macos-arm64 publish/macos-x64
+    echo "✓ macOS universal build → publish/macos-universal/"
 else
     echo "→ Jabsco.Ui (osx-arm64)"
-    publish_app Jabsco.Ui         ui
-    echo "→ Jabsco.Daemon (osx-arm64)"
-    publish_app Jabsco.Daemon     daemon      "-p:PublishSingleFile=true"
-    echo "→ Jabsco.PowerShell (osx-arm64)"
-    publish_app Jabsco.PowerShell powershell
-    echo "✓ macOS build → publish/osx-arm64/"
+    publish_app Jabsco.Ui         app         "-p:PublishSingleFile=true"
+    echo "✓ macOS build → publish/macos-arm64/"
 fi
 """
 

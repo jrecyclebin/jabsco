@@ -43,6 +43,7 @@ public sealed class ToolPolicyRepository
                 new ToolPolicyRule(0, 0, "screenshot",   ToolDecision.Allow,  null),
                 new ToolPolicyRule(0, 0, "move",         ToolDecision.Allow,  null),
                 new ToolPolicyRule(0, 0, "drag",         ToolDecision.Allow,  null),
+                new ToolPolicyRule(0, 0, "wait",         ToolDecision.Allow,  null),
                 new ToolPolicyRule(0, 0, "load_skill",   ToolDecision.Allow,  null),
                 new ToolPolicyRule(0, 0, "*",            ToolDecision.Prompt, null),
             ]), ct);

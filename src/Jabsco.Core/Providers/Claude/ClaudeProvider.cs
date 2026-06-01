@@ -37,16 +37,13 @@ public sealed class ClaudeProvider : IComputerUseProvider, IDisposable
         return ParseResponse(json);
     }
 
-    // Number of screenshots kept in context in cache-aware mode (current + history).
-    public const int CacheAwareScreenshotWindow = 3;
-
     private string BuildRequest(ProviderRequest request)
     {
         var messages = new JsonArray();
 
-        BuildMessages(request, messages, request.Options.Strategy);
+        BuildMessages(request, messages);
 
-        var tools = BuildTools(request.Options.Strategy);
+        var tools = BuildTools(_opts, request.Options.Strategy, request.Options.HasScreen, request.Options.HasVmHost);
 
         var requestObj = new JsonObject
         {
@@ -98,71 +95,73 @@ public sealed class ClaudeProvider : IComputerUseProvider, IDisposable
         return requestObj.ToJsonString();
     }
 
-    //
-    // Screenshots are attached to the last tool result in each round of model
-    // work. We then attach cache_control messages to the last three screenshots
-    // that aren't currently underway. (We wait for the current round to be finished
-    // before caching it.)
-    //
-    private void BuildMessages(ProviderRequest request, JsonArray messages, ModelStrategy strategy)
+    // AgentLoop has already pruned screenshots to what the strategy keeps, so a screenshot
+    // present on a turn or round is attached as-is. cache_control goes on the load_skill
+    // tool (see BuildTools) plus the latest few settled (history) screenshots.
+    private void BuildMessages(ProviderRequest request, JsonArray messages)
     {
-        var cacheSlotsLeft = CacheAwareScreenshotWindow;
-        for (int i = request.History.Count - 1; i >= 0; i--)
-        {
-            var round = request.History[i];
-            messages.Insert(0, AssistantTextMessage(round.FinalResponse ?? "[Interrupted]"));
-            for (int j = round.Turns.Count - 1; j >= 0; j--)
-            {
-                var turn = round.Turns[j];
-                var id = turn.ToolUseId;
-                bool includeScreenshot = false;
-                if (strategy == ModelStrategy.CacheAware)
-                {
-                    bool isLastTurn = j == round.Turns.Count - 1;
-                    includeScreenshot = isLastTurn && round.LastScreenshotPng != null;
-                    if (includeScreenshot && cacheSlotsLeft > 0)
-                        cacheSlotsLeft--;
-                    else
-                        includeScreenshot = false; // don't include screenshot if we've exhausted cache slots
-                }
+        var cached = CacheBreakpoints(request.History);
 
-                messages.Insert(0, UserToolResult(id, turn.Result,
-                    includeScreenshot ? round.LastScreenshotPng : null,
-                    includeScreenshot));
-                messages.Insert(0, AssistantToolUse(id, turn.Action));
+        for (int r = 0; r < request.History.Count; r++)
+        {
+            var round = request.History[r];
+            messages.Add(UserMessage(round.UserPrompt, Image(round.PromptScreenshotPng)));
+            foreach (var turn in round.Turns)
+            {
+                messages.Add(AssistantToolUse(turn.ToolUseId, turn.Action));
+                messages.Add(UserToolResult(turn.ToolUseId, turn.Result, Image(turn.ScreenshotPng)));
             }
-            messages.Insert(0, UserMessageText(round.UserPrompt));
+            messages.Add(AssistantTextMessage(round.FinalResponse ?? "[Interrupted]"));
         }
 
-        if (request.CurrentTurns.Count == 0)
+        messages.Add(UserMessage(request.UserPrompt, Image(request.PromptScreenshotPng)));
+        foreach (var turn in request.CurrentTurns)
         {
-            messages.Add(UserMessage(request.UserPrompt, request.ScreenshotPng));
+            messages.Add(AssistantToolUse(turn.ToolUseId, turn.Action));
+            messages.Add(UserToolResult(turn.ToolUseId, turn.Result, Image(turn.ScreenshotPng)));
         }
-        else
-        {
-            messages.Add(UserMessageText(request.UserPrompt));
-            for (int i = 0; i < request.CurrentTurns.Count; i++)
-            {
-                var turn = request.CurrentTurns[i];
-                var id = turn.ToolUseId;
-                bool isLast = i == request.CurrentTurns.Count - 1;
-                messages.Add(AssistantToolUse(id, turn.Action));
-                messages.Add(UserToolResult(id, turn.Result,
-                    isLast ? request.ScreenshotPng : null,
-                    false));
-            }
-        }
+
+        // With no screen there's no frame to show; the observation text is the model's
+        // current view of the connection, placed last so it's the freshest input.
+        if (!string.IsNullOrEmpty(request.Observation))
+            messages.Add(UserMessage(request.Observation, Image(null)));
+
+        (byte[]? png, bool cache) Image(byte[]? png) => (png, png != null && cached.Contains(png));
     }
 
-    private JsonArray BuildTools(ModelStrategy strategy)
+    // The latest few history screenshots carry cache breakpoints. History is already pruned,
+    // so these are simply the newest present screenshots, walked from the end. Current-round
+    // screenshots are never cached - we wait for a round to settle first.
+    public static HashSet<byte[]> CacheBreakpoints(IReadOnlyList<ConversationTurn> history)
     {
-        var computerTool = new JsonObject
+        var cached = new HashSet<byte[]>(ReferenceEqualityComparer.Instance);
+        for (int r = history.Count - 1; r >= 0 && cached.Count < ScreenshotPlan.Window; r--)
         {
-            ["type"] = ToolTypeFor(_opts.Model),
-            ["name"] = "computer",
-            ["display_width_px"] = _opts.DisplayWidth,
-            ["display_height_px"] = _opts.DisplayHeight
-        };
+            var round = history[r];
+            for (int j = round.Turns.Count - 1; j >= 0 && cached.Count < ScreenshotPlan.Window; j--)
+                if (round.Turns[j].ScreenshotPng is { } png)
+                    cached.Add(png);
+            if (cached.Count < ScreenshotPlan.Window && round.PromptScreenshotPng is { } prompt)
+                cached.Add(prompt);
+        }
+        return cached;
+    }
+
+    // The tool set is gated by connection capability: the computer tool only when there's a
+    // screen; vm tools only on a Hyper-V host. load_skill is always available.
+    public static JsonArray BuildTools(ClaudeOptions opts, ModelStrategy strategy, bool hasScreen, bool hasVmHost)
+    {
+        var tools = new JsonArray();
+
+        if (hasScreen)
+            tools.Add(new JsonObject
+            {
+                ["type"] = ToolTypeFor(opts.Model),
+                ["name"] = "computer",
+                ["display_width_px"] = opts.DisplayWidth,
+                ["display_height_px"] = opts.DisplayHeight
+            });
+
         var loadSkillTool = new JsonObject
         {
             ["name"] = "load_skill",
@@ -177,11 +176,84 @@ public sealed class ClaudeProvider : IComputerUseProvider, IDisposable
                 ["required"] = new JsonArray { "name" }
             }
         };
-
-        if (strategy == ModelStrategy.CacheAware)
+        if (strategy is ModelStrategy.CacheAware or ModelStrategy.ModelManaged)
             loadSkillTool["cache_control"] = new JsonObject { ["type"] = "ephemeral" };
+        tools.Add(loadSkillTool);
 
-        return new JsonArray { computerTool, loadSkillTool };
+        tools.Add(new JsonObject
+        {
+            ["name"] = "switch",
+            ["description"] = "Change what you are connected to. Provide exactly one of: "
+                + "'profile' (a saved connection name), 'vm_id' (a VM GUID on the current Hyper-V host), "
+                + "or 'disconnect': true. After switching, your next observation reflects the new connection.",
+            ["input_schema"] = new JsonObject
+            {
+                ["type"] = "object",
+                ["properties"] = new JsonObject
+                {
+                    ["profile"] = new JsonObject { ["type"] = "string" },
+                    ["vm_id"] = new JsonObject { ["type"] = "string" },
+                    ["disconnect"] = new JsonObject { ["type"] = "boolean" }
+                }
+            }
+        });
+
+        if (hasVmHost)
+            tools.Add(new JsonObject
+            {
+                ["name"] = "vm_action",
+                ["description"] = "Perform a lifecycle action on a Hyper-V VM. 'operation' is one of: "
+                    + "start, shutdown (graceful, always preferred), poweroff (force off), save, pause, resume, restart. "
+                    + "Omit 'vm_id' to act on the VM you're connected to, or pass a VM GUID to act on another VM on this host.",
+                ["input_schema"] = new JsonObject
+                {
+                    ["type"] = "object",
+                    ["properties"] = new JsonObject
+                    {
+                        ["operation"] = new JsonObject
+                        {
+                            ["type"] = "string",
+                            ["enum"] = new JsonArray { "start", "shutdown", "poweroff", "save", "pause", "resume", "restart" }
+                        },
+                        ["vm_id"] = new JsonObject { ["type"] = "string" }
+                    },
+                    ["required"] = new JsonArray { "operation" }
+                }
+            });
+
+        if (hasVmHost)
+            tools.Add(new JsonObject
+            {
+                ["name"] = "vm_setup",
+                ["description"] = "Create or reconfigure a Hyper-V VM. Pass 'vm_id' to alter an existing VM "
+                    + "(only the fields you include change); omit it to create a new VM ('name' and "
+                    + "'generation' are required for create). Hardware changes (memory, processor_count, "
+                    + "vhd_size_gb, iso_path, tpm, secure_boot, network_adapter, generation) require the VM "
+                    + "to be powered off first; checkpoints, guest_services, and enhanced_session can change "
+                    + "while it runs. Sizes are in MB (memory) and GB (disk).",
+                ["input_schema"] = new JsonObject
+                {
+                    ["type"] = "object",
+                    ["properties"] = new JsonObject
+                    {
+                        ["vm_id"] = new JsonObject { ["type"] = "string" },
+                        ["name"] = new JsonObject { ["type"] = "string" },
+                        ["generation"] = new JsonObject { ["type"] = "integer", ["enum"] = new JsonArray { 1, 2 } },
+                        ["memory_mb"] = new JsonObject { ["type"] = "integer" },
+                        ["vhd_size_gb"] = new JsonObject { ["type"] = "integer" },
+                        ["iso_path"] = new JsonObject { ["type"] = "string" },
+                        ["tpm"] = new JsonObject { ["type"] = "boolean" },
+                        ["secure_boot"] = new JsonObject { ["type"] = "boolean" },
+                        ["processor_count"] = new JsonObject { ["type"] = "integer" },
+                        ["network_adapter"] = new JsonObject { ["type"] = "string" },
+                        ["checkpoints"] = new JsonObject { ["type"] = "boolean" },
+                        ["guest_services"] = new JsonObject { ["type"] = "boolean" },
+                        ["enhanced_session"] = new JsonObject { ["type"] = "boolean" }
+                    }
+                }
+            });
+
+        return tools;
     }
 
     public string BuildSystemPrompt()
@@ -250,6 +322,18 @@ public sealed class ClaudeProvider : IComputerUseProvider, IDisposable
                     var skillName = block.GetProperty("input").GetProperty("name").GetString() ?? string.Empty;
                     action = new LoadSkillAction(skillName);
                     break;
+                case "tool_use" when block.GetProperty("name").GetString() == "switch":
+                    toolUseId = block.GetProperty("id").GetString();
+                    action = ParseSwitch(block.GetProperty("input"));
+                    break;
+                case "tool_use" when block.GetProperty("name").GetString() == "vm_action":
+                    toolUseId = block.GetProperty("id").GetString();
+                    action = ParseVmAction(block.GetProperty("input"));
+                    break;
+                case "tool_use" when block.GetProperty("name").GetString() == "vm_setup":
+                    toolUseId = block.GetProperty("id").GetString();
+                    action = ParseVmSetup(block.GetProperty("input"));
+                    break;
             }
         }
 
@@ -282,6 +366,84 @@ public sealed class ClaudeProvider : IComputerUseProvider, IDisposable
         };
     }
 
+    private static string SwitchToJson(SwitchAction sw)
+    {
+        var o = new JsonObject();
+        if (sw.Disconnect) o["disconnect"] = true;
+        else if (sw.VmId is { } vmId) o["vm_id"] = vmId.ToString();
+        else if (sw.Profile is { } profile) o["profile"] = profile;
+        return o.ToJsonString();
+    }
+
+    private static string VmActionToJson(VmAction va)
+    {
+        var o = new JsonObject { ["operation"] = va.Operation.ToToken() };
+        if (va.VmId is { } vmId) o["vm_id"] = vmId.ToString();
+        return o.ToJsonString();
+    }
+
+    private static string VmSetupToJson(VmSetupAction vs)
+    {
+        var o = new JsonObject();
+        if (vs.VmId is { } vmId) o["vm_id"] = vmId.ToString();
+        var s = vs.Spec;
+        if (s.Name is { } name) o["name"] = name;
+        if (s.Generation is { } gen) o["generation"] = (int)gen;
+        if (s.MemoryMB is { } mem) o["memory_mb"] = mem;
+        if (s.VhdSizeGB is { } vhd) o["vhd_size_gb"] = vhd;
+        if (s.IsoPath is { } iso) o["iso_path"] = iso;
+        if (s.Tpm is { } tpm) o["tpm"] = tpm;
+        if (s.SecureBoot is { } sb) o["secure_boot"] = sb;
+        if (s.ProcessorCount is { } cpu) o["processor_count"] = cpu;
+        if (s.NetworkAdapter is { } nic) o["network_adapter"] = nic;
+        if (s.Checkpoints is { } cp) o["checkpoints"] = cp;
+        if (s.GuestServices is { } gs) o["guest_services"] = gs;
+        if (s.EnhancedSession is { } es) o["enhanced_session"] = es;
+        return o.ToJsonString();
+    }
+
+    private static SwitchAction ParseSwitch(JsonElement input)
+    {
+        string? profile = input.TryGetProperty("profile", out var p) ? p.GetString() : null;
+        Guid? vmId = input.TryGetProperty("vm_id", out var v) && Guid.TryParse(v.GetString(), out var g) ? g : null;
+        bool disconnect = input.TryGetProperty("disconnect", out var d) && d.GetBoolean();
+        return new SwitchAction(profile, vmId, disconnect);
+    }
+
+    private static AgentAction ParseVmAction(JsonElement input)
+    {
+        var op = VmOperations.Parse(input.TryGetProperty("operation", out var o) ? o.GetString() : null);
+        if (op is null) return new DoneAction("Error: vm_action needs a valid operation.");
+        Guid? vmId = input.TryGetProperty("vm_id", out var v) && Guid.TryParse(v.GetString(), out var g) ? g : null;
+        return new VmAction(op.Value, vmId);
+    }
+
+    private static AgentAction ParseVmSetup(JsonElement input)
+    {
+        Guid? vmId = input.TryGetProperty("vm_id", out var v) && Guid.TryParse(v.GetString(), out var g) ? g : null;
+        var spec = new VmSpec(
+            Name:           Str(input, "name"),
+            Generation:     input.TryGetProperty("generation", out var gen) && gen.TryGetInt32(out var gn) ? (VmGeneration)gn : null,
+            MemoryMB:       Int(input, "memory_mb"),
+            VhdSizeGB:      Int(input, "vhd_size_gb"),
+            IsoPath:        Str(input, "iso_path"),
+            Tpm:            Bool(input, "tpm"),
+            SecureBoot:     Bool(input, "secure_boot"),
+            ProcessorCount: Int(input, "processor_count"),
+            NetworkAdapter: Str(input, "network_adapter"),
+            Checkpoints:    Bool(input, "checkpoints"),
+            GuestServices:  Bool(input, "guest_services"),
+            EnhancedSession: Bool(input, "enhanced_session"));
+        return new VmSetupAction(spec, vmId);
+    }
+
+    private static string? Str(JsonElement input, string prop) =>
+        input.TryGetProperty(prop, out var e) ? e.GetString() : null;
+    private static int? Int(JsonElement input, string prop) =>
+        input.TryGetProperty(prop, out var e) && e.TryGetInt32(out var i) ? i : null;
+    private static bool? Bool(JsonElement input, string prop) =>
+        input.TryGetProperty(prop, out var e) ? e.GetBoolean() : null;
+
     private static int GetX(JsonElement input) => GetCoordinate(input, "coordinate", 0);
     private static int GetY(JsonElement input) => GetCoordinate(input, "coordinate", 1);
 
@@ -310,9 +472,14 @@ public sealed class ClaudeProvider : IComputerUseProvider, IDisposable
 
     private static JsonObject AssistantToolUse(string id, AgentAction action)
     {
-        var (toolName, inputJson) = action is LoadSkillAction ls
-            ? ("load_skill", $$$"""{"name":"{{{ls.SkillName}}}"}""")
-            : ("computer", ActionToJson(action));
+        var (toolName, inputJson) = action switch
+        {
+            LoadSkillAction ls => ("load_skill", $$$"""{"name":"{{{ls.SkillName}}}"}"""),
+            SwitchAction sw    => ("switch", SwitchToJson(sw)),
+            VmAction va        => ("vm_action", VmActionToJson(va)),
+            VmSetupAction vs   => ("vm_setup", VmSetupToJson(vs)),
+            _                  => ("computer", ActionToJson(action))
+        };
 
         return new JsonObject
         {
@@ -329,6 +496,9 @@ public sealed class ClaudeProvider : IComputerUseProvider, IDisposable
             }
         };
     }
+
+    private static JsonObject UserToolResult(string id, string result, (byte[]? Png, bool Cache) image)
+        => UserToolResult(id, result, image.Png, image.Cache);
 
     private static JsonObject UserToolResult(string id, string result, byte[]? png, bool cacheBreakpoint = false)
     {
@@ -365,6 +535,19 @@ public sealed class ClaudeProvider : IComputerUseProvider, IDisposable
             ImageContent(png)
         }
     };
+
+    private static JsonObject UserMessage(string text, (byte[]? Png, bool Cache) image)
+    {
+        var content = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = text } };
+        if (image.Png != null)
+        {
+            var img = ImageContent(image.Png);
+            if (image.Cache)
+                img["cache_control"] = new JsonObject { ["type"] = "ephemeral" };
+            content.Add(img);
+        }
+        return new JsonObject { ["role"] = "user", ["content"] = content };
+    }
 
     private static JsonObject UserMessageText(string text) => new JsonObject
     {

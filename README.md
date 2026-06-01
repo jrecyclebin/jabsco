@@ -4,8 +4,11 @@
 
 This is an RDP client that can be used to control a remote desktop using Claude.
 I chose RDP because you can use it to connect to Hyper-V virtual machines - even
-before an OS is installed. I'd like to use an agent to automate machine setup.
-(I'm not quite there yet - this only works over straight RDP currently.)
+before an OS is installed.
+
+So this also has Hyper-V specific capabilities - the ability to list, create and
+change VM settings remotely - which are given to the agent so that it can build
+VMs from scratch, access them over RDP and switch between them.
 
 I also like remote desktop as the agent interface because it can't do anything
 outside of that connection - the virtual machine or remote user account is its
@@ -69,21 +72,46 @@ anthropic_api_key = "sk-ant-..."
 # Your cursor position is shown as a red arrow.
 # Additional instructions here.
 # """
-
-# Maximum agent steps before stopping (default: 50).
-# max_steps = 50
-
-# Milliseconds to wait between a tool result and the next screenshot (default: 800).
-# post_action_delay_ms = 800
-
-# Hard time limit in seconds for a single agent run (default: no limit).
-# time_budget_seconds = 300
-
-# Tool approval policy: "allow" auto-approves all tool calls (default: prompt user).
-# tool_policy = "allow"
 ```
 
-### Skills and commands
+## Hyper-V Support
+
+Work is being done to allow connections to a Hyper-V host - or to any of its
+VMs. The connection to the host isn't an RDP connection - it's a dashboard of
+VMs that the agent can access. (This connection is only support on Windows,
+where there is access to Powershell remoting.)
+
+The connections to the VMs themseves are RDP connections - using Hyper-V's
+VMConnect functionality. On Linux and Mac, you'll need to drop the VM's ID in
+there on the Hyper-V connection tab.
+
+All Hyper-V connections require you to use an actual Windows user's creds - and
+you'll also want to add that user to the **Hyper-V Administrators** group.
+(There's also likely work to do to get domain users working - you might want to
+create a local user on the machine that Jabsco can use.)
+
+In order to list and createVMs, you'll have to set up PS remoting on the host:
+
+```ps
+> Enable-PSRemoting -Force
+```
+
+Then, you also need to install Hyper-V tools on the Windows machine you're
+running Jabsco on and get WinRM set up. (Run this in an elevated prompt.)
+
+```ps
+Set-Service WinRM -StartupType Automatic
+Start-Service WinRM
+Set-Item WSMan:\localhost\Client\TrustedHosts -Value 'HYPERV-HOST' -Concatenate -Force
+```
+
+To find out the VM IDs you'll need to use when connecting from Mac and Linux:
+
+```ps
+> Get-VM | Select Name, Id
+```
+
+## Skills and commands
 
 User-defined reusable prompts live under the config directory:
 

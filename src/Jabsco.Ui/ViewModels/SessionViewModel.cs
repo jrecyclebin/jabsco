@@ -18,6 +18,7 @@ using Jabsco.Core.Rdp;
 using Jabsco.Core.Sessions;
 using Jabsco.Core.Skills;
 using Jabsco.Core.Transcripts;
+using Jabsco.Core.VmHost;
 using Microsoft.Extensions.Logging;
 using NUlid;
 
@@ -45,7 +46,7 @@ public sealed class ContextScreenshotViewModel : IDisposable
 
 public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
 {
-    private readonly FreeRdpClient _client;
+    private readonly ConnectionController _connection;
     private readonly ILoggerFactory _loggerFactory;
     private readonly JabscoDb? _db;
     private readonly int? _profileId;
@@ -78,6 +79,17 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
     [ObservableProperty]
     private byte[]? _currentFrame;
 
+    // False when there's no screen (host view): the main area shows the VM list instead.
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowVmList))]
+    private bool _hasScreen = true;
+
+    public bool ShowVmList => !HasScreen;
+
+    // The VMs on the current host, mirrored from the controller's cache for the host view.
+    public ObservableCollection<VmViewModel> Vms { get; } = [];
+    private DateTime _lastVmRefresh = DateTime.MinValue;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PanelToggleLabel))]
     [NotifyPropertyChangedFor(nameof(PanelArrow))]
@@ -94,14 +106,15 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ModelStrategyDescription))]
-    private ModelStrategy _selectedModelStrategy = ModelStrategy.LatestOnly;
+    private ModelStrategy _selectedModelStrategy = ModelStrategy.CacheAware;
 
     public IReadOnlyList<ModelStrategy> AvailableModelStrategies { get; } =
-        [ModelStrategy.LatestOnly, ModelStrategy.CacheAware];
+        [ModelStrategy.CacheAware, ModelStrategy.ModelManaged, ModelStrategy.LatestOnly];
 
     public string ModelStrategyDescription => SelectedModelStrategy switch
     {
-        ModelStrategy.CacheAware => "Keeps last 3 screenshots and adds cache_control breakpoints to reduce token costs on long runs.",
+        ModelStrategy.ModelManaged => "Sends a screenshot after each prompt and each screenshot action, pruning to the latest 3 every 25 turns to keep the cache warm.",
+        ModelStrategy.CacheAware => "Sends a screenshot after every turn, pruning to the latest 3 every 25 turns, with cache_control breakpoints to reduce token costs.",
         _ => "Sends only the current screenshot each turn. Simple and predictable."
     };
 
@@ -164,10 +177,10 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
     public bool IsHistoryPaneActive  => ActivePanelTab == SidePanelTab.History;
     public bool IsSettingsPaneActive => ActivePanelTab == SidePanelTab.Settings;
 
-    public SessionViewModel(FreeRdpClient client, string host, ILoggerFactory loggerFactory,
+    public SessionViewModel(ConnectionController connection, string host, ILoggerFactory loggerFactory,
         JabscoDb? db = null, int? profileId = null)
     {
-        _client = client;
+        _connection = connection;
         _loggerFactory = loggerFactory;
         _db = db;
         _profileId = profileId;
@@ -208,12 +221,84 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
         {
             try
             {
-                var png = await _client.CaptureScreenshotPngAsync(ct);
-                Dispatcher.UIThread.Post(() => CurrentFrame = png);
+                var screen = _connection.Screen;
+                if (screen is not null)
+                {
+                    var png = await screen.CaptureScreenshotPngAsync(ct);
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        CurrentFrame = png;
+                        HasScreen = true;
+                    });
+                }
+                else
+                {
+                    // Host view: no frame to show — poll the host every couple seconds so the
+                    // user sees VM state changes, then mirror the list.
+                    if ((DateTime.UtcNow - _lastVmRefresh).TotalSeconds >= 2)
+                    {
+                        _lastVmRefresh = DateTime.UtcNow;
+                        try { await _connection.RefreshVmsAsync(ct); } catch { /* transient */ }
+                    }
+                    var vms = _connection.Vms;
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        HasScreen = false;
+                        CurrentFrame = null;
+                        ReconcileVms(vms);
+                    });
+                }
                 await Task.Delay(100, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { break; }
             catch { /* transient errors — keep polling */ }
+        }
+    }
+
+    // Merge the controller's VM list into the displayed rows in place, so a pending action
+    // (busy state) survives a poll triggered by some other VM changing state.
+    private void ReconcileVms(IReadOnlyList<VmInfo> incoming)
+    {
+        for (int i = Vms.Count - 1; i >= 0; i--)
+            if (incoming.All(v => v.Id != Vms[i].Id))
+                Vms.RemoveAt(i);
+
+        foreach (var info in incoming)
+        {
+            var existing = Vms.FirstOrDefault(v => v.Id == info.Id);
+            if (existing is null) Vms.Add(new VmViewModel(info));
+            else existing.Update(info);
+        }
+    }
+
+    [RelayCommand]
+    private async Task SwitchToVm(VmViewModel vm)
+    {
+        vm.Busy = VmBusy.Connecting;
+        try { await _connection.SwitchToVmAsync(vm.Id); }
+        catch (Exception ex) { AddChat(ChatItemKind.Error, $"Could not connect to VM: {ex.Message}"); }
+        finally { vm.Busy = VmBusy.None; }
+    }
+
+    [RelayCommand]
+    private Task StartVm(VmViewModel vm) => RunVmAction(vm, VmOperation.Start, VmBusy.Starting);
+
+    // Idle press is a graceful Shutdown; pressing again while it's underway forces a power-off.
+    [RelayCommand]
+    private Task StopVm(VmViewModel vm) => vm.Busy == VmBusy.Stopping
+        ? RunVmAction(vm, VmOperation.PowerOff, VmBusy.Stopping)
+        : RunVmAction(vm, VmOperation.Shutdown, VmBusy.Stopping);
+
+    // Busy is left set on success — the host poll clears it once the VM actually changes state,
+    // which keeps "Force Stop" available the whole time a graceful shutdown is still pending.
+    private async Task RunVmAction(VmViewModel vm, VmOperation operation, VmBusy busy)
+    {
+        vm.Busy = busy;
+        try { await _connection.RunVmActionAsync(operation, vm.Id); }
+        catch (Exception ex)
+        {
+            vm.Busy = VmBusy.None;
+            AddChat(ChatItemKind.Error, $"Could not {operation.ToToken()} {vm.Name}: {ex.Message}");
         }
     }
 
@@ -333,7 +418,7 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
             using var _disposeProvider = provider as IDisposable;
             SystemTokenText = $"≈ {Compact(provider.BuildSystemPrompt().Length / 4)}";
 
-            var loop = new AgentLoop(_client, provider, new UiApprovalSink(ChatItems), _conversationHistory, new PolicyMatcher());
+            var loop = new AgentLoop(_connection, provider, new UiApprovalSink(ChatItems), _conversationHistory, new PolicyMatcher());
             var ac = config.Agent;
             var opts = new AgentOptions(
                 MaxSteps: ac.MaxSteps ?? 50,
@@ -420,11 +505,9 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
         {
             case ScreenshotEvent s:
                 CurrentFrame = s.PngBytes;
-                _screenshotsInContext = SelectedModelStrategy == ModelStrategy.CacheAware
-                    ? Math.Min(
-                        _conversationHistory.Count(r => r.LastScreenshotPng != null) + 1,
-                        ClaudeProvider.CacheAwareScreenshotWindow)
-                    : 1;
+                _screenshotsInContext = SelectedModelStrategy == ModelStrategy.LatestOnly
+                    ? 1
+                    : RetainedHistoryScreenshots().Count + 1;
                 ScreenshotCountText = _screenshotsInContext.ToString();
                 ScreenshotTokenText = $"≈ {Compact(_screenshotsInContext * EstimateImageTokens(s.PngBytes))}";
                 RebuildContextScreenshots(s.PngBytes);
@@ -520,16 +603,26 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
         foreach (var item in ContextScreenshots) item.Dispose();
         ContextScreenshots.Clear();
 
-        if (SelectedModelStrategy == ModelStrategy.CacheAware)
+        if (SelectedModelStrategy != ModelStrategy.LatestOnly)
         {
-            foreach (var turn in _conversationHistory
-                .Where(t => t.LastScreenshotPng != null)
-                .TakeLast(ClaudeProvider.CacheAwareScreenshotWindow - 1))
-            {
-                ContextScreenshots.Add(new ContextScreenshotViewModel(turn.LastScreenshotPng));
-            }
+            foreach (var png in RetainedHistoryScreenshots())
+                ContextScreenshots.Add(new ContextScreenshotViewModel(png));
         }
         ContextScreenshots.Add(new ContextScreenshotViewModel(currentPng));
+    }
+
+    // Screenshots from completed rounds still in context. The agent loop has already pruned
+    // history to what the strategy keeps, so whatever screenshots remain are what's sent.
+    private List<byte[]> RetainedHistoryScreenshots()
+    {
+        var result = new List<byte[]>();
+        foreach (var round in _conversationHistory)
+        {
+            if (round.PromptScreenshotPng is { } prompt) result.Add(prompt);
+            foreach (var turn in round.Turns)
+                if (turn.ScreenshotPng is { } png) result.Add(png);
+        }
+        return result;
     }
 
     private void AddChat(ChatItemKind kind, string text)
@@ -580,9 +673,18 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
         TypeAction t       => $"Type: \"{t.Text[..Math.Min(t.Text.Length, 40)]}\"",
         ScreenshotAction   => "Screenshot",
         LoadSkillAction ls => $"Load skill: {ls.SkillName}",
+        VmAction va        => $"{va.Operation} action",
+        VmSetupAction vs   => vs.VmId is { } ? "Alter VM" : $"Create VM {vs.Spec.Name}",
+        SwitchAction sw    => DescribeSwitch(sw),
         DoneAction         => "Done",
         _                  => action.GetType().Name
     };
+
+    private static string DescribeSwitch(SwitchAction sw) =>
+        sw.Disconnect   ? "Disconnect"
+        : sw.VmId is { } ? "Switch to VM"
+        : sw.Profile is { } p ? $"Switch to {p}"
+        : "Switch";
 
     // Allow interaction in Manual mode, or in Observe mode when the agent is idle.
     public bool CanInteract => ControlMode == ControlMode.Manual ||
@@ -590,32 +692,32 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
 
     public async Task SendMouseClickAsync(MouseButton button, int x, int y)
     {
-        if (!CanInteract) return;
-        try { await _client.MouseClickAsync(button, x, y, CancellationToken.None); } catch { }
+        if (!CanInteract || _connection.Screen is not { } s) return;
+        try { await s.MouseClickAsync(button, x, y, CancellationToken.None); } catch { }
     }
 
     public async Task SendMouseMoveAsync(int x, int y)
     {
-        if (!CanInteract) return;
-        try { await _client.MouseMoveAsync(x, y, CancellationToken.None); } catch { }
+        if (!CanInteract || _connection.Screen is not { } s) return;
+        try { await s.MouseMoveAsync(x, y, CancellationToken.None); } catch { }
     }
 
     public async Task SendScrollAsync(int x, int y, ScrollDirection direction, int amount)
     {
-        if (!CanInteract) return;
-        try { await _client.MouseScrollAsync(x, y, direction, amount, CancellationToken.None); } catch { }
+        if (!CanInteract || _connection.Screen is not { } s) return;
+        try { await s.MouseScrollAsync(x, y, direction, amount, CancellationToken.None); } catch { }
     }
 
     public async Task SendKeyPressAsync(string chord)
     {
-        if (!CanInteract) return;
-        try { await _client.KeyPressAsync(chord, CancellationToken.None); } catch { }
+        if (!CanInteract || _connection.Screen is not { } s) return;
+        try { await s.KeyPressAsync(chord, CancellationToken.None); } catch { }
     }
 
     public async Task SendTextAsync(string text)
     {
-        if (!CanInteract) return;
-        try { await _client.TypeTextAsync(text, CancellationToken.None); } catch { }
+        if (!CanInteract || _connection.Screen is not { } s) return;
+        try { await s.TypeTextAsync(text, CancellationToken.None); } catch { }
     }
 
     private static string Compact(int n) => n >= 1000 ? $"{n / 1000.0:0.#}k" : n.ToString("N0");
@@ -641,7 +743,7 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
         {
             try { await _viewTask.ConfigureAwait(false); } catch { }
         }
-        await _client.DisconnectAsync(CancellationToken.None);
+        await _connection.DisposeAsync();
         CloseTab?.Invoke();
     }
 
@@ -653,7 +755,7 @@ public partial class SessionViewModel : ViewModelBase, IAsyncDisposable
         {
             try { await _viewTask; } catch { }
         }
-        await _client.DisposeAsync();
+        await _connection.DisposeAsync();
     }
 
     private sealed class UiApprovalSink : IApprovalSink

@@ -160,7 +160,7 @@
                             <!-- Phase 1: enter credentials -->
                             <StackPanel Spacing="10"
                                         IsVisible="{Binding IsVmHostConnected, Converter={x:Static BoolConverters.Not}}">
-                                <Grid ColumnDefinitions="100,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                                <Grid ColumnDefinitions="100,*" RowDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="8" RowSpacing="8">
                                     <TextBlock Grid.Row="0" Grid.Column="0" Text="Host" VerticalAlignment="Center"/>
                                     <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding HyperVHost}"
                                              PlaceholderText="Hyper-V host address"/>
@@ -170,6 +170,9 @@
                                     <TextBlock Grid.Row="2" Grid.Column="0" Text="Password" VerticalAlignment="Center"/>
                                     <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding HyperVPassword}"
                                              PasswordChar="●" PlaceholderText="optional"/>
+                                    <TextBlock Grid.Row="3" Grid.Column="0" Text="VM GUID" VerticalAlignment="Center"/>
+                                    <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding HyperVVmGuid}"
+                                             PlaceholderText="optional — skips VM list"/>
                                 </Grid>
                                 <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
                                     <CheckBox Grid.Row="0" Grid.Column="0"
@@ -219,11 +222,14 @@
                                             <DataTemplate x:DataType="vm:VmViewModel">
                                                 <Border BorderBrush="#CACACA" BorderThickness="0,0,0,1" Padding="10,8">
                                                     <Grid ColumnDefinitions="*,Auto">
-                                                        <TextBlock Grid.Column="0"
-                                                                   Text="{Binding DisplayText}"
-                                                                   VerticalAlignment="Center"
-                                                                   Opacity="{Binding ItemOpacity}"
-                                                                   FontSize="13"/>
+                                                        <StackPanel Grid.Column="0" Orientation="Horizontal"
+                                                                    Spacing="8" VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding StateGlyph}"
+                                                                       Foreground="{Binding StateColor}"
+                                                                       FontSize="12" VerticalAlignment="Center"/>
+                                                            <TextBlock Text="{Binding Name}"
+                                                                       FontSize="13" VerticalAlignment="Center"/>
+                                                        </StackPanel>
                                                         <Button Grid.Column="1"
                                                                 IsVisible="{Binding CanConnect}"
                                                                 Content="Connect"

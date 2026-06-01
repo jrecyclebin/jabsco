@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Jabsco.Common.Events;
 using Jabsco.Core.Approval;
+using Jabsco.Core.Config;
 using Jabsco.Core.Persistence.Policies;
 using Jabsco.Core.Providers;
 using Jabsco.Core.Rdp;
@@ -12,7 +13,7 @@ namespace Jabsco.Core.Agent;
 
 public sealed class AgentLoop
 {
-    private readonly IRdpClient _rdp;
+    private readonly IConnection _connection;
     private readonly IComputerUseProvider _provider;
     private readonly IApprovalSink _approval;
     private readonly List<ConversationTurn> _history;
@@ -20,10 +21,10 @@ public sealed class AgentLoop
 
     public IReadOnlyList<ConversationTurn> History => _history;
 
-    public AgentLoop(IRdpClient rdp, IComputerUseProvider provider, IApprovalSink approval,
+    public AgentLoop(IConnection connection, IComputerUseProvider provider, IApprovalSink approval,
         IEnumerable<ConversationTurn>? initialHistory = null, PolicyMatcher? matcher = null)
     {
-        _rdp = rdp;
+        _connection = connection;
         _provider = provider;
         _approval = approval;
         _history = initialHistory?.ToList() ?? [];
@@ -44,7 +45,7 @@ public sealed class AgentLoop
         var currentTurns = new List<ToolTurn>();
         StoppedReason stopped = StoppedReason.ModelDone;
         int cursorX = -1, cursorY = -1;
-        byte[]? lastAnnotatedPng = null;
+        byte[]? promptScreenshot = null;
 
         while (true)
         {
@@ -54,19 +55,50 @@ public sealed class AgentLoop
             if (step > options.MaxSteps) { stopped = StoppedReason.StepBudget; break; }
             if (options.TimeBudget.HasValue && DateTimeOffset.UtcNow - started > options.TimeBudget.Value) { stopped = StoppedReason.TimeBudget; break; }
 
-            byte[] png;
+            var screen = _connection.Screen;
             ErrorEvent? err = null;
-            try { png = await _rdp.CaptureScreenshotPngAsync(ct); }
-            catch (OperationCanceledException) { stopped = StoppedReason.UserCancel; break; }
-            catch (Exception ex) { err = new ErrorEvent(ex.Message, ex.GetType().Name, DateTimeOffset.UtcNow, step); png = []; }
-            if (err != null) { yield return err; yield break; }
+            string? observation = null;
 
-            // Annotate with agent cursor so the model can see its own position
-            var annotated = cursorX >= 0 ? DrawCursorOnPng(png, cursorX, cursorY) : png;
-            lastAnnotatedPng = annotated;
-            yield return new ScreenshotEvent(annotated, DateTimeOffset.UtcNow, step);
+            if (screen is not null)
+            {
+                byte[] png;
+                try { png = await screen.CaptureScreenshotPngAsync(ct); }
+                catch (OperationCanceledException) { stopped = StoppedReason.UserCancel; break; }
+                catch (Exception ex) { err = new ErrorEvent(ex.Message, ex.GetType().Name, DateTimeOffset.UtcNow, step); png = []; }
+                if (err != null) { yield return err; yield break; }
 
-            var request = new ProviderRequest(annotated, prompt, _history, currentTurns, new ProviderOptions(Strategy: options.ModelStrategy));
+                // Annotate with agent cursor so the model can see its own position
+                var annotated = cursorX >= 0 ? DrawCursorOnPng(png, cursorX, cursorY) : png;
+                // The prompt screenshot is the round's first frame, captured once. Once it's
+                // pruned below it stays gone rather than being re-captured as a later frame.
+                if (step == 1) promptScreenshot = annotated;
+                yield return new ScreenshotEvent(annotated, DateTimeOffset.UtcNow, step);
+
+                // This capture is the result of the previous action; keep it on that turn if the
+                // strategy can use it, then drop any screenshots the strategy won't show again.
+                if (currentTurns.Count > 0 && currentTurns[^1].ScreenshotPng is null
+                    && ScreenshotPlan.Records(currentTurns[^1].Action, options.ModelStrategy))
+                    currentTurns[^1] = currentTurns[^1] with { ScreenshotPng = annotated };
+
+                var retained = ScreenshotPlan.Retained(_history, currentTurns, promptScreenshot, options.ModelStrategy);
+                FreePrunedScreenshots(currentTurns, retained);
+                // The prompt screenshot isn't on a record yet, so prune it here too; what reaches
+                // the provider is exactly what survives, which the provider attaches on presence.
+                if (!retained.Contains("p:current"))
+                    promptScreenshot = null;
+            }
+            else
+            {
+                // No screen: the model perceives the connection through text instead of a frame.
+                try { observation = await _connection.DescribeAsync(ct); }
+                catch (OperationCanceledException) { stopped = StoppedReason.UserCancel; break; }
+                catch (Exception ex) { err = new ErrorEvent(ex.Message, ex.GetType().Name, DateTimeOffset.UtcNow, step); }
+                if (err != null) { yield return err; yield break; }
+            }
+
+            var request = new ProviderRequest(prompt, _history, currentTurns,
+                new ProviderOptions(Strategy: options.ModelStrategy, HasScreen: screen is not null, HasVmHost: _connection.HasVmHost),
+                promptScreenshot, observation);
             ProviderResponse? response = null;
             err = null;
             try { response = await _provider.NextActionAsync(request, ct); }
@@ -83,7 +115,7 @@ public sealed class AgentLoop
 
             if (response.Action is DoneAction done)
             {
-                _history.Add(new ConversationTurn(prompt, currentTurns, done.Response, lastAnnotatedPng));
+                _history.Add(new ConversationTurn(prompt, currentTurns, done.Response, promptScreenshot));
                 var stats = new AgentStats(step, (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds, inputTokens, outputTokens, cachedInputTokens, _provider.ModelId, StoppedReason.ModelDone);
                 yield return new FinalEvent(done.Response, stats, DateTimeOffset.UtcNow, step);
                 yield break;
@@ -121,9 +153,16 @@ public sealed class AgentLoop
 
             string summary = string.Empty;
             err = null;
-            try { summary = await ExecuteActionAsync(response.Action, ct); }
-            catch (OperationCanceledException) { stopped = StoppedReason.UserCancel; break; }
-            catch (Exception ex) { err = new ErrorEvent(ex.Message, ex.GetType().Name, DateTimeOffset.UtcNow, step); }
+            if (screen is null && RequiresScreen(response.Action))
+            {
+                summary = "No screen is connected. Use the switch tool to connect to a VM or RDP profile before using computer tools.";
+            }
+            else
+            {
+                try { summary = await ExecuteActionAsync(response.Action, screen, ct); }
+                catch (OperationCanceledException) { stopped = StoppedReason.UserCancel; break; }
+                catch (Exception ex) { err = new ErrorEvent(ex.Message, ex.GetType().Name, DateTimeOffset.UtcNow, step); }
+            }
 
             if (err != null) { yield return err; yield break; }
 
@@ -147,10 +186,41 @@ public sealed class AgentLoop
         }
 
         if (currentTurns.Count > 0)
-            _history.Add(new ConversationTurn(prompt, currentTurns, FinalResponse: null, lastAnnotatedPng));
+        {
+            _history.Add(new ConversationTurn(prompt, currentTurns, FinalResponse: null, promptScreenshot));
+        }
 
         var finalStats = new AgentStats(step, (long)(DateTimeOffset.UtcNow - started).TotalMilliseconds, inputTokens, outputTokens, cachedInputTokens, _provider.ModelId, stopped);
         yield return new FinalEvent(string.Empty, finalStats, DateTimeOffset.UtcNow, step);
+    }
+
+    // Release screenshots the strategy has pruned for good. Pruning is monotonic, so a
+    // screenshot the plan no longer keeps will never be wanted again. Current turns are
+    // freed in place; history rounds are rewritten so the freed bytes drop once adopted.
+    private void FreePrunedScreenshots(List<ToolTurn> currentTurns, HashSet<string> retained)
+    {
+        for (int i = 0; i < currentTurns.Count; i++)
+            if (currentTurns[i].ScreenshotPng != null && !retained.Contains($"t:{currentTurns[i].ToolUseId}"))
+                currentTurns[i] = currentTurns[i] with { ScreenshotPng = null };
+
+        for (int r = 0; r < _history.Count; r++)
+        {
+            var round = _history[r];
+            bool dropPrompt = round.PromptScreenshotPng != null && !retained.Contains($"p:{r}");
+            List<ToolTurn>? turns = null;
+            for (int j = 0; j < round.Turns.Count; j++)
+                if (round.Turns[j].ScreenshotPng != null && !retained.Contains($"t:{round.Turns[j].ToolUseId}"))
+                {
+                    turns ??= [.. round.Turns];
+                    turns[j] = turns[j] with { ScreenshotPng = null };
+                }
+            if (dropPrompt || turns != null)
+                _history[r] = round with
+                {
+                    Turns = turns ?? round.Turns,
+                    PromptScreenshotPng = dropPrompt ? null : round.PromptScreenshotPng
+                };
+        }
     }
 
     private static string ActionToolName(AgentAction action) => action switch
@@ -164,6 +234,9 @@ public sealed class AgentLoop
         ScreenshotAction => "screenshot",
         LoadSkillAction  => "load_skill",
         WaitAction       => "wait",
+        SwitchAction     => "switch",
+        VmAction         => "vm_action",
+        VmSetupAction    => "vm_setup",
         _                => action.GetType().Name.ToLowerInvariant()
     };
 
@@ -198,17 +271,26 @@ public sealed class AgentLoop
         return data.ToArray();
     }
 
-    private async Task<string> ExecuteActionAsync(AgentAction action, CancellationToken ct) => action switch
+    // Actions that drive the screen. With no screen connected these are refused before
+    // execution, so the screen-action helpers below always receive a live screen.
+    private static bool RequiresScreen(AgentAction action) => action is
+        ClickAction or TypeAction or KeyAction or ScrollAction or
+        MouseMoveAction or DragAction or ScreenshotAction;
+
+    private async Task<string> ExecuteActionAsync(AgentAction action, IRdpClient? screen, CancellationToken ct) => action switch
     {
         ScreenshotAction => "screenshot taken",
         WaitAction w => await ExecuteWaitAsync(w, ct),
         LoadSkillAction ls => ExecuteLoadSkill(ls),
-        ClickAction c => await ExecuteClickAsync(c, ct),
-        MouseMoveAction m => await ExecuteMouseMoveAsync(m, ct),
-        DragAction d => await ExecuteDragAsync(d, ct),
-        ScrollAction s => await ExecuteScrollAsync(s, ct),
-        KeyAction k => await ExecuteKeyAsync(k, ct),
-        TypeAction t => await ExecuteTypeAsync(t, ct),
+        SwitchAction sw => await ExecuteSwitchAsync(sw, ct),
+        VmAction va => await ExecuteVmActionAsync(va, ct),
+        VmSetupAction vs => await ExecuteVmSetupAsync(vs, ct),
+        ClickAction c => await ExecuteClickAsync(screen!, c, ct),
+        MouseMoveAction m => await ExecuteMouseMoveAsync(screen!, m, ct),
+        DragAction d => await ExecuteDragAsync(screen!, d, ct),
+        ScrollAction s => await ExecuteScrollAsync(screen!, s, ct),
+        KeyAction k => await ExecuteKeyAsync(screen!, k, ct),
+        TypeAction t => await ExecuteTypeAsync(screen!, t, ct),
         _ => "unknown action"
     };
 
@@ -224,46 +306,81 @@ public sealed class AgentLoop
         catch (FileNotFoundException ex) { return $"Error: {ex.Message}"; }
     }
 
-    private async Task<string> ExecuteClickAsync(ClickAction c, CancellationToken ct)
+    // Switch failures are reported back to the model as a tool result so it can recover,
+    // rather than ending the run. Cancellation still propagates.
+    private async Task<string> ExecuteSwitchAsync(SwitchAction sw, CancellationToken ct)
+    {
+        try
+        {
+            if (sw.Disconnect) { await _connection.DisconnectAsync(ct); return "disconnected"; }
+            if (sw.VmId is { } vmId) { await _connection.SwitchToVmAsync(vmId, ct); return $"connected to VM {vmId}"; }
+            if (!string.IsNullOrEmpty(sw.Profile)) { await _connection.SwitchToProfileAsync(sw.Profile, ct); return $"connected to profile '{sw.Profile}'"; }
+            return "Error: switch needs a profile, vm_id, or disconnect.";
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
+        {
+            return $"Error: {ex.Message}";
+        }
+    }
+
+    private async Task<string> ExecuteVmActionAsync(VmAction va, CancellationToken ct)
+    {
+        try { return await _connection.RunVmActionAsync(va.Operation, va.VmId, ct); }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
+        {
+            return $"Error: {ex.Message}";
+        }
+    }
+
+    private async Task<string> ExecuteVmSetupAsync(VmSetupAction vs, CancellationToken ct)
+    {
+        try { return await _connection.RunVmSetupAsync(vs.Spec, vs.VmId, ct); }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException)
+        {
+            return $"Error: {ex.Message}";
+        }
+    }
+
+    private static async Task<string> ExecuteClickAsync(IRdpClient screen, ClickAction c, CancellationToken ct)
     {
         for (int i = 0; i < c.Clicks; i++)
         {
-            await _rdp.MouseClickAsync(c.Button, c.X, c.Y, ct);
+            await screen.MouseClickAsync(c.Button, c.X, c.Y, ct);
             if (i < c.Clicks - 1) await Task.Delay(50, ct);
         }
         return $"{c.Button} click at ({c.X},{c.Y})";
     }
 
-    private async Task<string> ExecuteMouseMoveAsync(MouseMoveAction m, CancellationToken ct)
+    private static async Task<string> ExecuteMouseMoveAsync(IRdpClient screen, MouseMoveAction m, CancellationToken ct)
     {
-        await _rdp.MouseMoveAsync(m.X, m.Y, ct);
+        await screen.MouseMoveAsync(m.X, m.Y, ct);
         return $"mouse moved to ({m.X},{m.Y})";
     }
 
-    private async Task<string> ExecuteDragAsync(DragAction d, CancellationToken ct)
+    private static async Task<string> ExecuteDragAsync(IRdpClient screen, DragAction d, CancellationToken ct)
     {
-        await _rdp.MouseMoveAsync(d.StartX, d.StartY, ct);
-        await _rdp.MouseClickAsync(MouseButton.Left, d.StartX, d.StartY, ct);
-        await _rdp.MouseMoveAsync(d.EndX, d.EndY, ct);
-        await _rdp.MouseClickAsync(MouseButton.Left, d.EndX, d.EndY, ct);
+        await screen.MouseMoveAsync(d.StartX, d.StartY, ct);
+        await screen.MouseClickAsync(MouseButton.Left, d.StartX, d.StartY, ct);
+        await screen.MouseMoveAsync(d.EndX, d.EndY, ct);
+        await screen.MouseClickAsync(MouseButton.Left, d.EndX, d.EndY, ct);
         return $"drag from ({d.StartX},{d.StartY}) to ({d.EndX},{d.EndY})";
     }
 
-    private async Task<string> ExecuteScrollAsync(ScrollAction s, CancellationToken ct)
+    private static async Task<string> ExecuteScrollAsync(IRdpClient screen, ScrollAction s, CancellationToken ct)
     {
-        await _rdp.MouseScrollAsync(s.X, s.Y, s.Direction, s.Amount, ct);
+        await screen.MouseScrollAsync(s.X, s.Y, s.Direction, s.Amount, ct);
         return $"scroll {s.Direction} {s.Amount}x at ({s.X},{s.Y})";
     }
 
-    private async Task<string> ExecuteKeyAsync(KeyAction k, CancellationToken ct)
+    private static async Task<string> ExecuteKeyAsync(IRdpClient screen, KeyAction k, CancellationToken ct)
     {
-        await _rdp.KeyPressAsync(k.Keys, ct);
+        await screen.KeyPressAsync(k.Keys, ct);
         return $"key: {k.Keys}";
     }
 
-    private async Task<string> ExecuteTypeAsync(TypeAction t, CancellationToken ct)
+    private static async Task<string> ExecuteTypeAsync(IRdpClient screen, TypeAction t, CancellationToken ct)
     {
-        await _rdp.TypeTextAsync(t.Text, ct);
+        await screen.TypeTextAsync(t.Text, ct);
         return $"typed: {t.Text[..Math.Min(t.Text.Length, 30)]}";
     }
 }

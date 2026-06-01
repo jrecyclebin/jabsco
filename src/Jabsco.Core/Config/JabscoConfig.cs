@@ -1,6 +1,6 @@
 namespace Jabsco.Core.Config;
 
-public enum ModelStrategy { LatestOnly, CacheAware }
+public enum ModelStrategy { LatestOnly, CacheAware, ModelManaged }
 
 // Adaptive thinking effort level sent to the model. Low and High map directly to the effort strings.
 public enum ThinkingMode { Off, Low, High }
