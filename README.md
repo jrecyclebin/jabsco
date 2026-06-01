@@ -48,6 +48,10 @@ before running it.
 * **Linux**: Install FreeRDP with your package manager. On Arch, the `freerdp`
   package is sufficient.
 
+> [!NOTE]
+> You can install using [mise](https://mise.jdx.dev). Just use `mise use
+> github:jrecyclebin/jabsco`.
+
 There may be issues running on odd architectures - like Windows or Linux on ARM.
 Jabsco's custom bindings aren't quite as portable as I'd like.
 
