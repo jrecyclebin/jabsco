@@ -38,7 +38,7 @@ sandbox.
 
 ## Quick Start
 
-Download a release - it's just a zip file with `jabsco.exe` inside.
+Download a release - it's just a zip file with `Jabsco.exe` inside.
 
 You'll need to put your Anthropic API key in the config file (see below) or set it as an environment variable (`ANTHROPIC_API_KEY`)
 before running it.
@@ -50,7 +50,7 @@ before running it.
 
 > [!NOTE]
 > You can install using [mise](https://mise.jdx.dev). Just use `mise use
-> github:jrecyclebin/jabsco`.
+> github:jrecyclebin/jabsco`. Then run `Jabsco` to bring up the app.
 
 There may be issues running on odd architectures - like Windows or Linux on ARM.
 Jabsco's custom bindings aren't quite as portable as I'd like.
