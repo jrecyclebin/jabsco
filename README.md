@@ -1,4 +1,4 @@
-![Jabsco at play.](src/Jabsco.Extra/jabsco-goose.png)
+<iframe width="560" height="315" src="https://www.youtube.com/embed/Hc86QUkW8Yk" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
 
 # Jabsco 🕴️ Agent of RDP
 
@@ -54,6 +54,8 @@ before running it.
 
 There may be issues running on odd architectures - like Windows or Linux on ARM.
 Jabsco's custom bindings aren't quite as portable as I'd like.
+
+![Jabsco at play.](src/Jabsco.Extra/jabsco-goose.png)
 
 ## Configuration
 
